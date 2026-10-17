@@ -406,7 +406,10 @@ replace-imports-with-any = [
   "manifold3d.**",
   "marimo.**",
   "mini_studies.**",
+  "mpi4jax.**",
   "mpi4py.**",
+  # MPContext constructs its public scalar classes dynamically per context.
+  "mpmath.**",
   "open3d.**",
   "openmdao.**",
   "parameter_targets.**",

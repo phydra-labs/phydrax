@@ -102,6 +102,31 @@ def _execution_group(devices: Any, axis_name: Any = "block_parts") -> Any:
     return ExecutionGroup(specification, devices)
 
 
+@pytest.mark.strict_jax
+@pytest.mark.filterwarnings("error:A JAX array is being set as static!:UserWarning")
+def test_preparation_preserves_packed_values_and_restart_identity() -> None:
+    hierarchy = _hierarchy()
+    _, compiled = _compiled(hierarchy)
+    fd, prepared = _prepare(hierarchy, compiled, 3)
+    _, restored_preparation = _prepare(hierarchy, compiled.topology, 3)
+    assert restored_preparation.prepared_id == prepared.prepared_id
+    assert (
+        restored_preparation.manifest_compatibility_data()
+        == prepared.manifest_compatibility_data()
+    )
+    assert prepared.manifest_compatibility_data()["active_stable_block_ids"] == [
+        np.asarray(level.block_ids)[np.asarray(level.active)].tolist()
+        for level in compiled.topology.levels
+    ]
+
+    state = _state(compiled.topology, fd)
+    restored = restored_preparation.unpack(prepared.pack(state))
+    for original, actual in zip(state.levels, restored.levels, strict=True):
+        active = np.asarray(original.metadata.active)
+        np.testing.assert_array_equal(actual.values[active], original.values[active])
+        np.testing.assert_array_equal(actual.values[~active], 0.0)
+
+
 def test_distributed_block_amr_scenario_1() -> None:
     hierarchy = _hierarchy()
     compiler, direct = _compiled(hierarchy)

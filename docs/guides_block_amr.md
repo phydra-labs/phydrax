@@ -30,6 +30,9 @@ aligned child counts, and stable integer block-ID range from one prepared tensor
 `BlockLevelPlan` fixes block shape, halo width, refinement ratio, and maximum blocks.
 Level zero always covers the full base grid. Active blocks occupy a compact prefix in
 canonical lattice/stable-ID order; inactive metadata uses explicit sentinels.
+Distributed layout slot identities are immutable Python-integer metadata, not
+numerical PyTree leaves. Canonical owner, local-slot, and stable-ID arrays retain
+their byte-based layout and restart fingerprints.
 
 `FDAMRHierarchyPlan.prepare()` owns the cell-centered lifecycle:
 

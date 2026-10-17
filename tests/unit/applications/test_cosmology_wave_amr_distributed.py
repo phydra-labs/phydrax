@@ -421,3 +421,17 @@ def test_process_checkpoint_accepts_local_path_subset_but_manifest_requires_inve
     )
     with pytest.raises(ValueError, match="inventory is incomplete"):
         execution._validate_checkpoint_manifest(incomplete, execution)
+    for analysis_id, numeric_id in (
+        ("foreign-analysis", prepared.physics.plan_id),
+        (prepared.prepared_id, "foreign-physics"),
+    ):
+        foreign = CheckpointManifest(
+            incomplete.checkpoint_id,
+            analysis_id,
+            numeric_id,
+            execution.execution_id,
+            incomplete.shards,
+            complete=True,
+        )
+        with pytest.raises(ValueError, match="lifecycle ownership"):
+            execution._validate_checkpoint_manifest(foreign, execution)

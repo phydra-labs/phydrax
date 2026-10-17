@@ -43,6 +43,10 @@ For a local process set, `LocalProcessLaunchPlan` and
 inject the same explicit rendezvous identity. Each rank's environment replaces
 the base environment's rank settings as one group, clearing local device IDs and
 bind addresses it does not set, while keeping timeouts the base already selects.
+Use `devices_per_process=1` to assign one distinct local GPU to each worker.
+The local substrate benchmark exposes this as `--devices-per-process` and
+checks actual GPU ownership. Its diagonal solve is a bootstrap and collective
+smoke, not a solver-scaling qualification.
 
 ::: phydrax.execution.RuntimeInfo
 
@@ -121,9 +125,14 @@ The [Linux procfs documentation](https://man7.org/linux/man-pages/man5/proc_pid_
 marks RSS and high-water counters as inaccurate; source counter resolution is
 their granularity, not an accuracy guarantee.
 
-`discover_resource_inventory` attaches local host and device samples to the
-`ResourceInventory` as evidence excluded from `inventory_id`, and uses the
-allocator limit as `DeviceResource.memory_bytes` when exposed. A
+`discover_resource_inventory` and `ExecutionRuntime.current()` are collective
+in an initialized multi-process runtime: every rank must call them in the same
+collective sequence. Device allocator capacities are exchanged in canonical
+device order, using only each device owner's observation, so all ranks derive
+the same inventory and execution-group identities. Local host and device memory
+samples remain evidence excluded from `inventory_id`; use `sample_host_memory`
+and `sample_device_memory` for rank-local observation without coordination.
+The allocator limit becomes `DeviceResource.memory_bytes` when exposed. A
 `ResourceRequest(memory_envelope="certified")` admits a candidate only when its
 `ExecutionResourceEvidence` declares per-host (and, for accelerators,
 per-device) peak and reserve bytes with `memory_basis` `declared` or

@@ -44,6 +44,13 @@ of a built `libphydrax_cuda_<component>.so` before first use. These overrides
 retain component, release-version, CUDA-major, and handler validation. NVIDIA
 dependencies are preloaded by absolute path from installed NVIDIA wheels.
 
+An architecture-local developer wheel is not portable merely because its CUDA
+major matches. In particular, an RTX 5090 `--architectures native` build does not
+qualify an A100. Rebuild with `--architectures 80-real` for an sm80-only development
+artifact, or use a release companion containing sm80 SASS. Retain the build
+manifest and wheel SHA256, and qualify each CUDA major in its own environment.
+See `native/cuda/README.md` in the source checkout for build instructions.
+
 `phydrax.backends.cuda_native_resources()` inspects already loaded components
 without loading others. Its `components` record identities; `partitions` report
 `component`, `device`, `partition`, `live`, `capacity`, and `rebuilds`. cuDSS and
@@ -131,6 +138,15 @@ and [Configuration startup](api/configuration.md#phases-and-startup) for explici
 coordinator settings and supported launcher environments. MPI is a launcher or
 an optional interoperability route, not a requirement for JAX/NCCL collectives.
 
+For two local worker processes, set `LocalProcessLaunchPlan(...,
+devices_per_process=1)` (or `--devices-per-process 1` in
+`tools.distributed_substrate_benchmark.py`) so ranks own disjoint GPUs. Two ranks
+sharing one GPU do not qualify physical multi-GPU execution. Resource inventory
+discovery is collective; every rank must invoke it in the same sequence.
+cuDSS and AmgX preparations remain single-device solves with device-isolated
+caches, not distributed sparse solvers; QUDA currently refuses a second device
+within one process.
+
 ## GPU-direct MPI interoperability
 
 `phydrax[mpi]` is opt-in interoperability support. GPU-direct mpi4jax requires a
@@ -159,3 +175,100 @@ mpi4jax for GPU-direct transport. A CUDA-enabled bridge is checked before import
 even for host-staged use, because mpi4jax loads that bridge unconditionally.
 See [Distributed and vendor execution capabilities](api/backends.md#distributed-and-vendor-execution-capabilities)
 for communicator ownership, direct-transport qualification, and deployment limits.
+
+### Single-host CUDA-aware MPI qualification
+
+`tools.qualify_cuda_mpi` accepts an already-built, matching MPI/UCX/Python
+installation. It does not install a replacement MPI into an application
+environment. Keep CUDA majors in separate prefixes and Python environments.
+The A100 reference stack uses Open MPI 5.0.10, UCX 1.20.1, mpi4py 4.1.2,
+mpi4jax 0.9.1.post2, and JAX/JAXlib 0.11.2. UCX includes CUDA IPC and CUDA-copy
+transports; this bounded same-host build does not include RDMA or GDRCopy.
+
+Run from a checkout with its canonical `uv.lock`. Each target Python environment
+must contain Phydrax (an editable install is sufficient), its locked dependencies,
+and the test dependencies; a `PYTHONPATH` entry alone does not install the package
+metadata used by benchmark provenance.
+
+```bash
+JAX_PLATFORMS=cpu python -m tools.qualify_cuda_mpi \
+  --python /path/to/cuda13-env/bin/python \
+  --mpi-prefix /path/to/cuda13-mpi \
+  --ucx-prefix /path/to/cuda13-ucx \
+  --visible-devices 0,1 \
+  --nsys /path/to/compatible/nsys \
+  --output cuda13-mpi-qualification.json
+```
+
+The driver requires all eight dtype/placement/transport integration cases to
+pass; optional-suite skips fail qualification. It then measures sum and
+sendrecv over an explicit bounded message-size sweep, in fresh processes for
+CUDA-aware and mpi4jax-host-staged routes. Two physical GPU UUIDs and a two-rank
+MPI shared-memory domain are required; hostnames alone do not prove co-location.
+Control collectives use a separate communicator and execute
+outside timed device calls. Corresponding rank samples are aggregated by
+their maximum, rather than taking the maximum of independently computed
+medians. Preparation, lowering, compilation, first dispatch, warm samples,
+compiler memory, and process-local allocator evidence remain separate.
+Allocator counters describe JAX allocations, not all MPI/UCX native storage.
+
+Run without other tests, builds, or GPU jobs when retaining performance
+evidence. The default per-buffer bound is 64 MiB and only two changed inputs
+are retained. Effective payload throughput is message bytes divided by
+synchronized JAX invocation time, not a claim about physical link bandwidth.
+
+`--nsys` adds separate three-repeat capture runs after the timing campaign.
+The capture brackets only warmed communication, excluding input generation
+and host-side numerical validation. Trace reports are retained beside the
+qualification JSON; profiled timings cannot enter the performance aggregate.
+Use a profiler compatible with the selected CUDA runtime. Without a capture,
+UCX configuration/protocol logs are transport evidence, not proof of absent
+host copies. Neither a CUDA-aware MPI query nor successful collectives
+qualify network GPUDirect RDMA or multi-host scaling.
+
+#### Two-A100 results
+
+Both CUDA 12 and CUDA 13 stacks passed all eight integration cases on two
+A100-SXM4-80GB GPUs with driver 580.159.04. The matrix covers distinct-GPU and
+deliberately shared-GPU ranks, direct and explicitly host-staged transport,
+float32/float64, repeated changed inputs, supported derivatives and explicit
+unsupported-transform refusals, and communicator release/recreation. Real
+opposite-major mpi4jax bridges were also refused before package import in
+both environments.
+
+The uncontended sweep covers 8 B, 1 KiB, 64 KiB, 1 MiB, 16 MiB, and 64 MiB
+per rank, with 31 warmed samples per point. Representative float64 results
+below are medians of corresponding-rank maximum synchronized durations,
+including JAX dispatch but excluding control barriers:
+
+| CUDA | Operation | Payload per rank | CUDA-aware MPI | Explicit mpi4jax host staging |
+| --- | --- | --- | --- | --- |
+| 12 | sendrecv | 64 MiB | 0.874 ms | 130.011 ms |
+| 13 | sendrecv | 64 MiB | 0.863 ms | 125.065 ms |
+| 12 | sum | 64 MiB | 169.739 ms | 163.699 ms |
+| 13 | sum | 64 MiB | 170.175 ms | 160.533 ms |
+
+Full per-rank samples, phase timings, compiler evidence, memory observations,
+and runtime identities are retained in
+`benchmarks/cuda_mpi_cuda12_cuda_direct.json`,
+`benchmarks/cuda_mpi_cuda12_host_staged.json`,
+`benchmarks/cuda_mpi_cuda13_cuda_direct.json`, and
+`benchmarks/cuda_mpi_cuda13_host_staged.json`.
+Opaque MPI calls report unknown XLA cost estimates; those raw sentinel values
+are retained rather than converted into invented FLOP counts.
+
+Separate Nsight Systems 2026.5.1 captures contain exactly three warmed
+64 MiB float64 calls per rank. Both CUDA majors show the same copy totals:
+
+| Route and operation | Host-to-device per rank | Device-to-host per rank | Peer copies per rank | Local device copies per rank |
+| --- | --- | --- | --- | --- |
+| CUDA-aware sendrecv | 0 | 0 | 192 MiB | 384 MiB |
+| CUDA-aware sum | 192 MiB | 384 MiB | 0 | 0 |
+| Explicit host staging, either operation | 192 MiB | 192 MiB | 0 | 0 |
+
+UCX protocol records select CUDA IPC for the large device-buffer exchanges;
+the peer traces show GPU 0→1 and GPU 1→0. Thus the captured large sendrecv
+calls avoid host copies, but still perform device copies. This finding does
+not extend to every message size. SUM still stages internally despite CUDA
+awareness, so this MPI stack is not a GPU-resident allreduce qualification or
+a blanket performance replacement for native GPU collectives.

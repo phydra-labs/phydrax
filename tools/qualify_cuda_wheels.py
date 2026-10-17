@@ -52,6 +52,7 @@ from phydrax._cuda_native import CudaNativeUnavailableError, load_cuda_component
 from phydrax.backends import cuda_environment
 
 major = int(sys.argv[1])
+required_gpus = int(sys.argv[3])
 hostile = sys.argv[2] if len(sys.argv) > 2 else ""
 try:
     components = {name: load_cuda_component(name) for name in ("cudss", "amgx", "quda")}
@@ -64,6 +65,13 @@ except CudaNativeUnavailableError as error:
     )
     print("AUDIT " + json.dumps({"refused": refusal, "accepted_refusal": accepted}), flush=True)
     sys.exit(0 if accepted else 1)
+devices = jax.devices("gpu")
+if len(devices) < required_gpus:
+    print("AUDIT " + json.dumps({
+        "required_gpus": required_gpus, "visible_gpus": len(devices),
+        "error": "Insufficient visible CUDA devices for hardware qualification",
+    }), flush=True)
+    sys.exit(1)
 la = phx.linalg
 size = 4
 matrix = np.diag(np.arange(2.0, 2.0 + size)) + 0.1 * (np.ones((size, size)) - np.eye(size))
@@ -100,6 +108,11 @@ print("AUDIT " + json.dumps({
     "device": jax.devices()[0].device_kind,
     "compute_capability": jax.devices()[0].compute_capability,
     "driver_version": report.facts.driver_version,
+    "required_gpus": required_gpus,
+    "devices": [
+        {"id": device.id, "kind": device.device_kind, "compute_capability": device.compute_capability}
+        for device in devices
+    ],
     "runtime_version": report.facts.runtime_version,
     "jax": jax.__version__,
 }), flush=True)
@@ -118,6 +131,7 @@ class Evidence(TypedDict):
     timestamp: str
     completed_at: str
     major: int
+    required_gpus: int
     venv: str
     wheels: dict[str, str]
     install: list[CommandEvidence]
@@ -232,6 +246,8 @@ def install(
 
 def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
     # Only the test package is importable from the tree; phydrax comes from the wheel.
+    # One process owns all visible GPUs, including same-plan two-device tests.
+    # xdist workers must not concurrently initialize providers on the same GPU.
     environment = clean_environment(library_path=None)
     environment["PYTHONPATH"] = str(tests_root)
     result = run(
@@ -244,7 +260,7 @@ def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
             "-q",
             "-rs",
             "-n",
-            "2",
+            "0",
             "--rootdir",
             str(ROOT),
             "-c",
@@ -264,13 +280,34 @@ def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
         evidence["errors"].append(
             f"Companion tests skipped as unavailable in a qualification run: {unavailable}"
         )
+    if evidence["required_gpus"] >= 2:
+        hardware_skips = [
+            line
+            for line in skipped
+            if re.search(r"two (?:CUDA devices|GPUs)", line, flags=re.IGNORECASE)
+        ]
+        if hardware_skips:
+            evidence["errors"].append(
+                f"Required two-device qualification skipped: {hardware_skips}"
+            )
 
 
 def audit(
-    python: Path, major: int, label: str, library_path: str | None, evidence: Evidence
+    python: Path,
+    major: int,
+    label: str,
+    library_path: str | None,
+    evidence: Evidence,
 ) -> None:
     result = run(
-        [str(python), "-c", AUDIT, str(major), library_path or ""],
+        [
+            str(python),
+            "-c",
+            AUDIT,
+            str(major),
+            library_path or "",
+            str(evidence["required_gpus"]),
+        ],
         environment=clean_environment(library_path=library_path),
         cwd=Path(tempfile.gettempdir()),
     )
@@ -290,6 +327,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--major", type=int, choices=(12, 13), required=True)
     parser.add_argument("--venv", type=Path, required=True, help="Qualification venv")
+    parser.add_argument(
+        "--required-gpus",
+        type=int,
+        default=1,
+        help="Minimum visible CUDA devices; use 2 to require two-device qualification.",
+    )
     parser.add_argument(
         "--reuse-venv",
         action="store_true",
@@ -316,6 +359,8 @@ def main() -> int:
     parser.add_argument("--linux-tag", default="manylinux_2_28")
     parser.add_argument("--evidence", type=Path, required=True)
     args = parser.parse_args()
+    if args.required_gpus < 1:
+        parser.error("--required-gpus must be positive")
     major: int = args.major
     venv: Path = args.venv.resolve()
     phydrax_wheel: Path = args.phydrax_wheel.resolve()
@@ -324,6 +369,7 @@ def main() -> int:
         "timestamp": datetime.now(UTC).isoformat(),
         "completed_at": "",
         "major": major,
+        "required_gpus": args.required_gpus,
         "venv": str(venv),
         "wheels": {
             path.name: sha256(path)
@@ -348,11 +394,13 @@ def main() -> int:
     if not evidence["errors"] and install(
         python, phydrax_wheel, wheelhouse, major, evidence
     ):
+        # Gate hardware availability before tests can skip.
+        audit(python, major, "clean", None, evidence)
+    if not evidence["errors"]:
         with tempfile.TemporaryDirectory(prefix="phydrax-cuda-qualify-") as scratch:
             tests_root = Path(scratch)
             (tests_root / "tests").symlink_to(ROOT / "tests", target_is_directory=True)
             run_tests(python, tests_root, evidence)
-        audit(python, major, "clean", None, evidence)
         audit(python, major, "hostile", args.hostile_library_path, evidence)
         if args.extras_gate_work_dir is not None:
             gate = run(

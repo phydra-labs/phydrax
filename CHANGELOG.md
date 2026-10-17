@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Breaking
+- Resource-inventory discovery, including `ExecutionRuntime.current()`, is now
+  collective across distributed processes so allocator capacities and execution
+  identities agree. Every rank must call it in the same collective sequence;
+  use `sample_host_memory` and `sample_device_memory` for rank-local observations.
 - Rename provider `spineax-cudss` to `cudss` and lattice provider `pyquda` to
   `quda`, with no compatibility aliases. Rename `SpineaxBackend`,
   `SPINEAX_CAPABILITIES`, and `spineax_availability` to `CudssBackend`,
@@ -38,6 +42,18 @@
 - `BackendAvailability.environment_issues` (a new field, which changes the
   `BackendAvailability` PyTree structure) and pre-import CUDA-major refusal for
   user-provided mpi4jax native dependencies.
+- Admit the compiled MACE coupling route on A100 (sm 8.0), with real-device
+  float32/float64 forward, all-operand derivative, mixed-derivative, resource,
+  and derivative-order refusal coverage. Other unqualified Ampere variants
+  remain refused.
+- `tools/qualify_cuda_wheels.py --required-gpus 2` requires real two-device
+  provider coverage, checks device availability before tests can skip, and
+  runs native lifecycle checks serially.
+- Add fail-closed two-GPU CUDA-aware MPI qualification, dtype/derivative and
+  communicator-lifecycle checks, bounded message-size sweeps against explicit
+  host staging, and separate CUDA-profiler capture regions.
+- Qualify the pinned CUDA 12/13 MPI stacks on two A100s. Large exchanges use
+  CUDA IPC without captured host copies; SUM still stages internally.
 
 ### Removed
 - Spineax, pyamgx, PyQUDA, and CuPy provider paths and dependencies in favor
@@ -46,6 +62,39 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Give the pinned AmgX implementation per-device cuBLAS and cuSPARSE handles.
+  Preparing independent solves on two GPUs no longer reuses the first GPU's
+  library handles on the second device.
+- Assemble distributed resource inventories from each GPU owner's allocator
+  capacity so every process derives the same inventory and execution-group
+  identity. Memory samples remain process-local evidence; single-process
+  identities and the canonical payload format are unchanged.
+- Bind local distributed benchmark workers to explicit disjoint GPU sets and
+  distinguish shared-GPU MPI checks from physical two-GPU transport.
+- Reuse the MPI send buffer as the default read-only receive shape/dtype
+  placeholder. This removes an unnecessary zero allocation and restores
+  mpi4jax's supported same-shape sendrecv VJP.
+- Refuse Morton dual-tree capacities, expanded/seed frontiers, and conservative
+  cumulative counters outside signed int32 before allocation, rather than
+  failing during tracing or silently wrapping traversal evidence.
+- Bound distributed spectral benchmark reference data and changed-input buffers,
+  generate campaign inputs shard-locally, and record numerical gates and
+  process-local memory evidence. Distinguish physical accelerator campaigns
+  from CPU/lane functional checks in spectral and MACE records.
+  The spectral driver exposes the native plan budget through `--maximum-bytes`
+  and samples memory again after validation.
+- Remove the shared benchmark array walker's self-referential closure. Completed
+  repeat results now release immediately instead of retaining device allocations
+  until cyclic garbage collection, which inflated memory and latency samples.
+- Store distributed block-AMR slot identities as Python integers rather than
+  NumPy scalars, avoiding static-array warnings without changing numerical
+  leaves or byte-based layout/restart identities.
+- Correct the distributed Wave-AMR checkpoint workflow to transition the saved
+  accepted state and start a new checkpoint chain when execution ownership
+  changes. Preserve scientific transition diagnostics separately; reject
+  cross-owner parents and foreign analysis/numeric restore ownership.
+- Type-check mpmath's genuinely context-generated scalar classes at their
+  dynamic provider boundary and remove obsolete NumPy-stub suppressions.
 - `GaussConstraintNetwork` stores its static `incidence_pattern` as Python
   integers instead of NumPy scalars, which equinox treated as arrays set as
   static and warned about; network identities and PyTree structure are unchanged.

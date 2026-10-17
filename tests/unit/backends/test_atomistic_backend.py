@@ -112,6 +112,8 @@ def test_precision_and_accumulation_are_distinct_admitted_identities() -> None:
 @pytest.mark.parametrize(
     ("capability", "admitted"),
     [
+        ((8, 0), True),
+        ((8, 6), False),
         ((9, 0), True),
         ((12, 0), True),
         ((8, 9), False),

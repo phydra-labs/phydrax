@@ -332,7 +332,6 @@ def test_power_float32_preserves_mixed_magnitude_coordinates() -> None:
         atol=0.0,
         rtol=5e-5,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         derivative.astype(jnp.float64),
         reference_derivative,

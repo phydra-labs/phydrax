@@ -70,6 +70,12 @@ CUDA major. `--download-dir` optionally shares verified archives across majors;
 without it, each build tree keeps its own `downloads` directory. `--jobs`
 controls parallel compilation (default 2). Container mounts use these explicit
 paths together with the wheelhouse, source tree, and supplied Python environment.
+When changing the pinned AmgX patch chain in an existing build tree, remove its
+generated `_deps/phx_amgx_source-src` and `_deps/phx_amgx_source-subbuild`
+directories before reconfiguration. FetchContent otherwise reapplies the old
+patches to already-patched sources. Retain the download cache and the rest of
+the build tree; neither a clean toolkit installation nor a clean QUDA build is
+needed.
 
 
 Omit `--architectures` for release SASS coverage: CUDA 13 targets 80, 86, 89,
@@ -83,6 +89,69 @@ Use `--container podman` or `--container docker` for the
 receive the host-compatible manylinux tag and do not claim manylinux_2_28
 compatibility unless their actual symbol requirements satisfy it. Source
 distributions are deliberately refused; publish wheels only.
+
+## A100 hardware qualification
+
+For an A100-only artifact, select `--architectures 80-real` explicitly, not
+`native` from a build tree previously used on an RTX 5090. Use separate build
+trees and Python environments for CUDA 12 and 13:
+
+```sh
+python tools/build_cuda_wheels.py --major 13 --architectures 80-real \
+  --components cudss,amgx,quda --python /path/to/cuda13-env/bin/python \
+  --build-dir /path/to/build/cuda13-sm80 --download-dir /path/to/shared-cache \
+  --wheelhouse /path/to/wheelhouse13 --jobs 12
+```
+
+Provision the companion's `build-system.requires` plus `build`, `auditwheel`,
+and `patchelf` in that environment before invoking the tool. `readelf`, a host
+C/C++ compiler, and `patch` must also be available. Set `--jobs` to the allocated
+CPU budget, not the host's total CPU count. Repeat with `--major 12` and a
+separate CUDA 12 environment/build tree when qualifying that major.
+
+The component build hash identifies native sources and patches, not a target
+GPU or compiler installation. Retain the wheel SHA256 and JSON build manifest
+alongside it; the manifest records toolkit wheels, compiler version, requested
+architectures, and inspected SASS/PTX. An sm80-only wheel is not qualification
+of the full release architecture set. The cuDSS adapter is host-only: its GPU
+kernels come from the separately installed NVIDIA cuDSS wheel.
+
+Run installed-wheel qualification with both allocated devices visible:
+
+```sh
+CUDA_VISIBLE_DEVICES=0,1 python tools/qualify_cuda_wheels.py \
+  --major 13 --required-gpus 2 --venv /path/to/qualification-env \
+  --phydrax-wheel /path/to/phydrax.whl --wheelhouse /path/to/wheelhouse13 \
+  --evidence /path/to/cuda13-a100-qualification.json
+```
+
+The wheelhouse must also contain the matching `phydrax-cuda-major` marker.
+The qualifier checks the required visible GPU count before running provider
+tests, records each device's kind and compute capability, and rejects skipped
+two-device coverage when `--required-gpus 2` is requested. Provider tests run
+serially: one process owns the visible GPUs rather than independent xdist
+workers racing to initialize providers on the same hardware.
+
+Two-device cuDSS and AmgX checks cover independent solves with identical plan
+identities, device-partitioned native caches, release/rebuild, and process-exit
+cleanup. They do **not** certify a distributed linear solve. QUDA remains
+one-device-per-process and must visibly refuse a second device. A100 executes
+the existing pre-SM90 active-mask warp-election branch; sm80 numerical provider
+tests are required in addition to artifact inspection. Do not run performance
+measurements concurrently with builds or correctness checks.
+
+The pinned AmgX patch owns cuBLAS and cuSPARSE handles per CUDA device, instead
+of reusing the first device's process-global handles. Provider calls remain
+serialized, handles survive device switches, and resource teardown destroys
+each handle with its owning device selected.
+
+Releasing a live preparation frees its named memo only. Reading an evicted or
+released immutable preparation reconstructs a bounded memo under a fresh native
+ID; the original preparation's ID does not change. Releasing that stale ID does
+not release the anonymous reconstructed memo. Such entries remain bounded by
+their device/plan cache capacity and are reclaimed by eviction or the explicit
+component-wide release-all/shutdown sequence before process exit.
+
 
 ## Publishing order
 

@@ -66,6 +66,21 @@ rollback. Accepted-boundary topology successors run phase-aware owner-local tran
 stable-ID repartition, exact resource admission, and changed-sharding checkpoint
 restore. There is no host-gather fallback.
 
+Checkpoint parent links describe a continuation under the **same** analysis,
+numeric-revision, and execution owner. A topology successor changes the prepared
+analysis owner; repartition changes the execution owner. Both therefore start a
+new checkpoint chain, not a cross-owner `parent_manifest` link. Transition the
+checkpointed accepted state (including its scale factor), then preserve the source
+manifest identity, accepted topology-transition evidence, and stable-ID migration
+identity in the successor manifest's `diagnostic_ids`. These are scientific
+provenance, not a claim that the two persistence owners are identical.
+
+Publish the destination checkpoint without a parent, assemble it with those
+diagnostics, and restore it using its exact source execution. A later checkpoint
+under that same destination owner may use this root as its `parent_manifest`;
+assembly and restore must receive the exact parent as well. Restoring into a
+different partition does not rewrite the stored checkpoint owner or its lineage.
+
 Periodic and isolated boundaries are separate descriptors. `IsolatedPotentialGauge`
 requires an explicit finite-domain/multipole convention. `AbsorbingWaveBoundaryPolicy`
 reports removed probability and rejects excessive absorption. Isolated physics is never

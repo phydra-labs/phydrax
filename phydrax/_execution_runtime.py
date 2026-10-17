@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import jax
 import numpy as np
+from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from ._execution_device import device_vendor
@@ -25,11 +26,16 @@ from ._fingerprint import canonical_fingerprint
 
 
 def discover_resource_inventory() -> ResourceInventory:
-    """Describe every JAX device and measure local memory after runtime bootstrap.
+    """Collectively describe every JAX device after runtime bootstrap.
 
-    Device capacity is the allocator ``bytes_limit`` when the provider exposes it.
-    Host and device memory samples cover this process's host and addressable
-    devices only; other processes' capacity remains unknown evidence.
+    Device capacity is the allocator ``bytes_limit`` reported by its owning
+    process. All processes exchange capacity in canonical device order so the
+    inventory identity is shared. Timestamped host and device memory samples
+    remain local evidence; unavailable owner capacity remains unknown.
+
+    Every process must call discovery in the same collective sequence. For
+    rank-local memory observations, use ``sample_host_memory`` and
+    ``sample_device_memory`` instead.
     """
 
     devices = sorted(jax.devices(), key=lambda item: (item.process_index, item.id))
@@ -39,6 +45,20 @@ def discover_resource_inventory() -> ResourceInventory:
     capacity = {
         sample.key: sample.allocator_limit.value_bytes for sample in device_memory
     }
+    if jax.process_count() > 1:
+        local_capacity = np.asarray(
+            [capacity.get((device.process_index, device.id)) or 0 for device in devices],
+            dtype=np.int64,
+        )
+        capacities = np.asarray(
+            multihost_utils.process_allgather(local_capacity, tiled=False)
+        )
+        capacity = {
+            (device.process_index, device.id): int(
+                capacities[device.process_index, index]
+            )
+            for index, device in enumerate(devices)
+        }
     resources = tuple(
         DeviceResource(
             process_index=device.process_index,
@@ -205,6 +225,11 @@ class ExecutionRuntime:
         *,
         mesh_axes: Sequence[tuple[str, int]] | None = None,
     ) -> ExecutionRuntime:
+        """Collectively discover and bind the initialized process set.
+
+        Every process must enter this call in the same collective sequence.
+        """
+
         inventory = discover_resource_inventory()
         spec = root_execution_group_spec(inventory, mesh_axes=mesh_axes)
         return cls(inventory, bind_execution_group(spec))

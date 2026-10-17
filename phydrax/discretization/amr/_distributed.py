@@ -123,6 +123,8 @@ def _contiguous_owners(costs: np.ndarray, part_count: int, /) -> np.ndarray:
 
 
 class _BlockAMRLevelLayout(StrictModule, NonTrainableState):
+    """Keep packing indices dynamic and host iteration identities as Python metadata."""
+
     block_owner: Array
     local_block_slots: Array
     local_block_valid: Array
@@ -148,7 +150,7 @@ class _BlockAMRLevelLayout(StrictModule, NonTrainableState):
         axis_name: str,
     ) -> None:
         identities = tuple(
-            tuple(local_block_slots[part, local_block_valid[part]])
+            tuple(local_block_slots[part, local_block_valid[part]].tolist())
             for part in range(local_block_slots.shape[0])
         )
         self.block_owner = jnp.asarray(block_owner, dtype=jnp.int32)

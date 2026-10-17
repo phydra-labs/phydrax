@@ -1,5 +1,6 @@
-"""Rank-local GPU collectives, independent of JAX distributed bootstrap."""
+"""Qualify distinct-GPU and explicitly shared-GPU rank-local MPI collectives."""
 
+import json
 import os
 import shlex
 import shutil
@@ -11,102 +12,29 @@ import pytest
 
 
 _ROOT = Path(__file__).resolve().parents[2]
-_WORKER = r"""
-import importlib.util
-import json
-import os
-import sys
+_WORKER = _ROOT / "tests" / "_support" / "cuda_mpi_worker.py"
 
 
-if any(importlib.util.find_spec(name) is None for name in ("mpi4jax", "mpi4py")):
-    print("mpi4jax and mpi4py are required", flush=True)
-    sys.exit(77)
-from mpi4py import MPI
-# This provider owns rank-local MPI, not JAX multi-host initialization. Retain
-# the real MPI communicator while preventing the independent import bootstrap.
-for key in ("SLURM_NTASKS", "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "PMIX_SIZE"):
-    os.environ.pop(key, None)
-
-import jax
-import jax.numpy as jnp
-import numpy as np
-from phydrax._execution_device import device_platform
-from phydrax.backends.distributed import Mpi4JaxCollectiveProvider, mpi4jax_availability
-
-availability = mpi4jax_availability()
-if availability.environment_issues:
-    print(availability.reason, flush=True)
-    sys.exit(77)
-
-if not any(device_platform(device) == "cuda" for device in jax.devices()):
-    print("A CUDA device is required", flush=True)
-    sys.exit(77)
-
-comm = MPI.COMM_WORLD.Dup()
-direct = os.environ["MPI4JAX_USE_CUDA_MPI"] == "1"
-try:
-    provider = Mpi4JaxCollectiveProvider(comm, "cuda-mpi-test", gpu_direct=direct)
-except RuntimeError as error:
-    if str(error) not in (
-        "mpi4jax was built without CUDA support",
-        "MPI exposes no CUDA-awareness qualification query",
-        "gpu_direct requires CUDA-aware MPI",
-    ):
-        raise
-    print(str(error), flush=True)
-    sys.exit(77)
-
-if sys.argv[1] == "probe":
-    print("CUDA-aware MPI qualified: " + MPI.Get_library_version(), flush=True)
-    comm.Free()
-    sys.exit(0)
-
-rank = comm.Get_rank()
-assert comm.Get_size() == 2
-value = jnp.asarray([rank + 1, rank + 2], dtype=jnp.float32)
-assert all(device_platform(device) == "cuda" for device in value.devices())
-results = {}
-for name, operation, reference in (
-    ("sum", provider.sum, [3, 5]),
-    ("mean", provider.mean, [1.5, 2.5]),
-    ("maximum", provider.maximum, [2, 3]),
-    ("minimum", provider.minimum, [1, 2]),
-):
-    result = jax.jit(operation)(value)
-    result.block_until_ready()
-    assert all(device_platform(device) == "cuda" for device in result.devices())
-    np.testing.assert_array_equal(result, np.asarray(reference, dtype=np.float32))
-    results[name] = np.asarray(result).tolist()
-
-def exchange(value: jax.Array) -> jax.Array:
-    return provider.sendrecv(value, source=1-rank, destination=1-rank)
-
-received = jax.jit(exchange)(value)
-received.block_until_ready()
-np.testing.assert_array_equal(
-    received, np.asarray([2-rank, 3-rank], dtype=np.float32)
-)
-results["sendrecv"] = np.asarray(received).tolist()
-print(json.dumps({"rank": rank, "route": provider.provider_id, "values": results}), flush=True)
-comm.Free()
-"""
-
-
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
 @pytest.mark.parametrize("gpu_direct", [True, False], ids=["cuda-direct", "host-staged"])
-def test_cuda_mpi_collectives(gpu_direct: bool) -> None:
+@pytest.mark.parametrize("placement", ["distinct-gpus", "shared-gpu"])
+def test_cuda_mpi_collectives(gpu_direct: bool, placement: str, dtype: str) -> None:
     launcher = shlex.split(os.environ.get("PHYDRAX_MPI_LAUNCHER", "mpirun"))
     if not launcher or shutil.which(launcher[0]) is None:
-        pytest.skip("MPI launcher is not installed")
+        pytest.skip(
+            "Optional CUDA MPI qualification unavailable: MPI launcher is not installed"
+        )
     environment = {
         **os.environ,
         "PYTHONPATH": str(_ROOT),
         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-        "MPI4JAX_USE_CUDA_MPI": "1",
+        "MPI4JAX_USE_CUDA_MPI": "1" if gpu_direct else "0",
+        "JAX_ENABLE_X64": "true",
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",
     }
     probe = subprocess.run(
-        [sys.executable, "-c", _WORKER, "probe"],
+        [sys.executable, str(_WORKER), "probe", placement, dtype],
         cwd=_ROOT,
         env=environment,
         capture_output=True,
@@ -117,19 +45,60 @@ def test_cuda_mpi_collectives(gpu_direct: bool) -> None:
     if probe.returncode == 77:
         pytest.skip(probe.stdout.strip())
     assert probe.returncode == 0, probe.stdout + probe.stderr
-    environment["MPI4JAX_USE_CUDA_MPI"] = "1" if gpu_direct else "0"
     completed = subprocess.run(
-        [*launcher, "-np", "2", sys.executable, "-c", _WORKER, "run"],
+        [*launcher, "-np", "2", sys.executable, str(_WORKER), "run", placement, dtype],
         cwd=_ROOT,
         env=environment,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert '"rank": 0' in completed.stdout, completed.stdout
-    assert '"rank": 1' in completed.stdout, completed.stdout
+    records = [
+        json.loads(line) for line in completed.stdout.splitlines() if line.startswith("{")
+    ]
+    assert sorted(record["rank"] for record in records) == [0, 1], completed.stdout
+    assert all(record["placement"] == placement for record in records)
+    assert all(record["dtype"] == dtype for record in records)
+    assert all(record["gpu_direct"] is gpu_direct for record in records)
+    ownership = records[0]["device_ownership"]
+    assert records[1]["device_ownership"] == ownership
+    assert len({tuple(device) for device in ownership}) == (
+        2 if placement == "distinct-gpus" else 1
+    )
+    assert len({host for host, _ in ownership}) == 1
+    assert all(uuid.startswith("GPU-") for _, uuid in ownership)
+    route = "cuda-direct" if gpu_direct else "host-staged"
+    for record in records:
+        phases = record["phases"]
+        assert [phase["generation"] for phase in phases] == [0, 1]
+        for generation, phase in enumerate(phases):
+            assert phase["caller_released"] is True
+            assert phase["route"] == f"mpi4jax:cuda-mpi-test-{generation}:{route}"
+            assert [primal["step"] for primal in phase["primals"]] == list(
+                range(generation * 3, generation * 3 + 3)
+            )
+            assert all(
+                set(primal["values"]) == {"sum", "mean", "maximum", "minimum", "sendrecv"}
+                for primal in phase["primals"]
+            )
+        assert set(phases[0]["differentiation"]) == {
+            "sum.jvp",
+            "mean.jvp",
+            "sum.vjp",
+            "mean.vjp",
+            "sendrecv.vjp",
+        }
+        assert {
+            name: refusal["exception"] for name, refusal in phases[0]["refusals"].items()
+        } == {
+            "maximum.jvp": "NotImplementedError",
+            "minimum.jvp": "NotImplementedError",
+            "maximum.vjp": "NotImplementedError",
+            "minimum.vjp": "NotImplementedError",
+            "sendrecv.jvp": "RuntimeError",
+        }
 
 
 def test_mismatched_cuda_mpi_bridge_is_refused_before_import() -> None:

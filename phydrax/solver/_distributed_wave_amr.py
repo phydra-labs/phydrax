@@ -865,6 +865,11 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         if manifest.execution_plan_id != source.execution_id:
             raise ValueError("Checkpoint execution identity does not match its source.")
         if (
+            manifest.analysis_plan_id != source.source_prepared_id
+            or manifest.numeric_revision_id != source.physics_id
+        ):
+            raise ValueError("Checkpoint lifecycle ownership does not match its source.")
+        if (
             self.source_prepared_id != source.source_prepared_id
             or self.topology_id != source.topology_id
             or self.physics_id != source.physics_id

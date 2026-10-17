@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Run synchronized execution-substrate benchmarks on the active JAX runtime."""
+"""Smoke-test synchronized execution-substrate bootstrap, reductions, and PCG."""
 
 from __future__ import annotations
 
@@ -53,9 +53,8 @@ def run(size: int, iterations: int) -> dict[str, object]:
     info = runtime_info()
     runtime = ExecutionRuntime.current()
     device_count = runtime.root_group.spec.device_count
-    group_token = np.asarray(
-        int(runtime.root_group.spec.group_id[:16], 16),
-        dtype=np.uint64,
+    group_token = np.frombuffer(
+        bytes.fromhex(runtime.root_group.spec.group_id), dtype=np.uint8
     )
     group_tokens = np.asarray(multihost_utils.process_allgather(group_token, tiled=False))
     group_identity_consistent = bool(np.all(group_tokens == group_tokens[0]))
@@ -66,6 +65,12 @@ def run(size: int, iterations: int) -> dict[str, object]:
             f"tokens={group_tokens.tolist()}; "
             f"inventory={runtime.inventory.to_payload()}"
         )
+    local_hardware_ids = np.asarray(
+        [device.local_hardware_id for device in jax.local_devices()], dtype=np.int64
+    )
+    hardware_ids = np.asarray(
+        multihost_utils.process_allgather(local_hardware_ids, tiled=False)
+    ).reshape(info.process_count, -1)
     padded_size = ((size + device_count - 1) // device_count) * device_count
     host = np.linspace(0.0, 1.0, padded_size, dtype=np.float64)
     valid = np.arange(padded_size) < size
@@ -111,12 +116,14 @@ def run(size: int, iterations: int) -> dict[str, object]:
             "local_device_count": info.local_device_count,
             "platforms": list(info.platforms),
             "execution_group_id": runtime.root_group.spec.group_id,
+            "local_hardware_ids_by_process": hardware_ids.tolist(),
         },
         "problem": {
             "logical_size": size,
             "group_identity_consistent": group_identity_consistent,
             "padded_size": padded_size,
             "iterations": iterations,
+            "qualification": "bootstrap-and-collective-smoke",
         },
         "weighted_mean": {
             "seconds": mean_seconds,
@@ -140,8 +147,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--size", type=int, default=1 << 18)
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--local-processes", type=int, default=1)
+    parser.add_argument(
+        "--devices-per-process",
+        type=int,
+        default=1,
+        help="Disjoint GPUs per local worker; forced CPU device counts are unchanged.",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
+    if arguments.local_processes <= 0 or arguments.devices_per_process <= 0:
+        parser.error("local-processes and devices-per-process must be positive")
     if arguments.local_processes > 1 and not arguments.worker:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
@@ -158,16 +173,31 @@ def main(argv: Sequence[str] | None = None) -> None:
                 str(arguments.size),
                 "--iterations",
                 str(arguments.iterations),
+                "--local-processes",
+                str(arguments.local_processes),
+                "--devices-per-process",
+                str(arguments.devices_per_process),
                 "--worker",
             ),
             LocalProcessLaunchPlan(
                 arguments.local_processes,
                 f"127.0.0.1:{port}",
+                devices_per_process=arguments.devices_per_process,
             ),
             environment=environment,
         )
         print(results[0].stdout.decode("utf-8").strip())
         return
+    if arguments.worker:
+        local_devices = jax.local_devices()
+        if any(device.platform == "gpu" for device in local_devices):
+            start = jax.process_index() * arguments.devices_per_process
+            expected = list(range(start, start + arguments.devices_per_process))
+            actual = [device.local_hardware_id for device in local_devices]
+            if actual != expected:
+                raise RuntimeError(
+                    f"local worker GPU ownership differs: expected={expected}, actual={actual}"
+                )
     result = run(arguments.size, arguments.iterations)
     if jax.process_index() == 0:
         print(json.dumps(result, allow_nan=False, sort_keys=True))

@@ -9,13 +9,15 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
-from phydrax import solver
+from phydrax import _execution_runtime as runtime_module, solver
 from phydrax.execution import (
     DeviceMemorySample,
     DeviceResource,
@@ -36,6 +38,7 @@ from phydrax.execution import (
     resolve_execution_plan,
     ResourceInventory,
     ResourceRequest,
+    root_execution_group_spec,
     sample_device_memory,
     sample_host_memory,
 )
@@ -177,6 +180,99 @@ def test_inventory_retains_memory_measurement_provenance() -> None:
     )
     assert sample.live_array_bytes.value_bytes is not None
     assert sample.live_array_bytes.value_bytes >= held.nbytes
+
+
+@pytest.mark.parametrize("process_count", [1, 2])
+@pytest.mark.parametrize(
+    ("platform", "capacities"),
+    [
+        ("gpu", (8 << 30, None, 16 << 30)),
+        ("gpu", (8 << 30, 16 << 30, 0)),
+        ("cpu", (None, None, None)),
+    ],
+)
+def test_inventory_uses_owner_capacity_for_shared_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    process_count: int,
+    platform: str,
+    capacities: tuple[int | None, ...],
+) -> None:
+    devices = tuple(
+        SimpleNamespace(
+            process_index=owner,
+            id=device_id,
+            local_hardware_id=local_id,
+            platform=platform,
+            device_kind="NVIDIA test GPU" if platform == "gpu" else "cpu",
+            client=SimpleNamespace(platform="cuda" if platform == "gpu" else "cpu"),
+        )
+        for owner, device_id, local_id in (
+            (0, 3, 0),
+            (0, 7, 1),
+            (process_count - 1, 42, 0),
+        )
+    )
+    samples = tuple(
+        replace(
+            _gpu_sample(capacity, 0),
+            process_index=device.process_index,
+            device_id=device.id,
+        )
+        for device, capacity in zip(devices, capacities, strict=True)
+    )
+    monkeypatch.setattr(runtime_module.jax, "devices", lambda: list(reversed(devices)))
+    monkeypatch.setattr(runtime_module.jax, "process_count", lambda: process_count)
+
+    def observe(rank: int) -> ResourceInventory:
+        monkeypatch.setattr(runtime_module.jax, "process_index", lambda: rank)
+        local_samples = tuple(
+            sample for sample in samples if sample.process_index == rank
+        )
+        monkeypatch.setattr(
+            runtime_module, "sample_device_memory", lambda local: local_samples
+        )
+        monkeypatch.setattr(
+            runtime_module,
+            "sample_host_memory",
+            lambda: replace(_host_sample(300 * _MIB), process_index=rank),
+        )
+
+        def gather(local: NDArray[np.int64], *, tiled: bool) -> NDArray[np.int64]:
+            # Other ranks' guesses cannot override a device owner's observation.
+            observed = np.full((process_count, len(devices)), 999 << 30, dtype=np.int64)
+            for index, device in enumerate(devices):
+                observed[device.process_index, index] = capacities[index] or 0
+            observed[rank] = local
+            return observed
+
+        monkeypatch.setattr(runtime_module.multihost_utils, "process_allgather", gather)
+        inventory = discover_resource_inventory()
+        assert tuple(device.key for device in inventory.devices) == tuple(
+            (device.process_index, device.id) for device in devices
+        )
+        assert tuple(device.memory_bytes for device in inventory.devices) == tuple(
+            capacity or None for capacity in capacities
+        )
+        assert inventory.device_memory == local_samples
+        assert tuple(sample.process_index for sample in inventory.host_memory) == (rank,)
+        return inventory
+
+    inventories = tuple(observe(rank) for rank in range(process_count))
+    assert len({inventory.inventory_id for inventory in inventories}) == 1
+    assert (
+        len({root_execution_group_spec(inventory).group_id for inventory in inventories})
+        == 1
+    )
+    original = inventories[0]
+    changed = ResourceInventory(
+        process_count,
+        0,
+        (replace(original.devices[0], memory_bytes=32 << 30), *original.devices[1:]),
+    )
+    assert changed.inventory_id != original.inventory_id
+    assert root_execution_group_spec(changed).group_id != (
+        root_execution_group_spec(original).group_id
+    )
 
 
 @requires_host_probe

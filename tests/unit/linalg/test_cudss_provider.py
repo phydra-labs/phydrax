@@ -468,6 +468,67 @@ def test_cudss_release_inside_jit_and_idempotence() -> None:
 
 
 @pytest.mark.cuda_native
+def test_cudss_same_plan_isolated_across_two_devices() -> None:
+    from phydrax._cuda_native import cuda_partition_key
+    from phydrax._jax_config import default_device
+
+    _require_cudss()
+    devices = jax.devices("gpu")[:2]
+    if len(devices) < 2:
+        pytest.skip("Same-plan cuDSS qualification requires two CUDA devices")
+    prepared: list[la.PreparedLinearSolve] = []
+    matrices: list[jax.Array] = []
+    forcings: list[jax.Array] = []
+    try:
+        for index, device in enumerate(devices):
+            with default_device(device):
+                matrix = jnp.asarray(
+                    [[4.0 + index, 1.0], [1.0, 3.0 + index]], dtype=jnp.float32
+                )
+                matrices.append(matrix)
+                forcings.append(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
+                prepared.append(_prepare(matrix, 1))
+        assert prepared[0].plan.plan_id == prepared[1].plan.plan_id
+        key = cuda_partition_key(prepared[0].plan.plan_id)
+        for index, device in enumerate(devices):
+            with default_device(device):
+                result = eqx.filter_jit(la.solve)(prepared[index], forcings[index])
+                np.testing.assert_allclose(
+                    result.value,
+                    np.linalg.solve(
+                        np.asarray(matrices[index]), np.asarray(forcings[index])
+                    ),
+                    rtol=1e-6,
+                )
+                assert result.value.devices() == {device}
+                assert int(result.provenance.native_rebuilds) == 0
+        partitions = [
+            entry
+            for entry in phx.backends.cuda_native_resources().partitions
+            if entry.component == "cudss" and entry.partition == key
+        ]
+        assert {(entry.device, entry.live, entry.capacity) for entry in partitions} == {
+            (device.id, 1, 1) for device in devices
+        }
+        la.release(prepared[0])
+        with default_device(devices[1]):
+            result = la.solve(prepared[1], forcings[1])
+            np.testing.assert_allclose(
+                result.value,
+                np.linalg.solve(np.asarray(matrices[1]), np.asarray(forcings[1])),
+                rtol=1e-6,
+            )
+            assert int(result.provenance.native_rebuilds) == 0
+    finally:
+        for item in prepared:
+            la.release(item)
+    assert not any(
+        entry.component == "cudss" and entry.partition == key
+        for entry in phx.backends.cuda_native_resources().partitions
+    )
+
+
+@pytest.mark.cuda_native
 @pytest.mark.parametrize("singular", [False, True])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 def test_cudss_partial_inertia_never_certifies_zero(

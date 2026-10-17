@@ -10,8 +10,9 @@ seeded receiver aggregation executed by the Pallas kernels and its local
 radial weights and harmonics generated inside the fragment. The oracle is the
 native ``O3TensorProduct`` evaluated per edge over the whole graph, masked and
 summed with ``jax.ops.segment_sum``: ordinary JAX with its own derivatives.
-The kernels run through the CPU Mosaic GPU interpreter, which verifies kernel
-semantics, ownership and transformation rules; it is not GPU qualification.
+Most cases use the CPU Mosaic GPU interpreter to verify kernel semantics,
+ownership and transformation rules, not GPU qualification. The explicit CUDA
+case compiles the admitted device route and skips when CUDA is unavailable.
 """
 
 import math
@@ -899,3 +900,118 @@ def test_cuda_target_refuses_without_an_admitted_device() -> None:
         pytest.skip("An admitted CUDA device is present; refusal is not observable.")
     with pytest.raises(RuntimeError, match="pallas-atomistic"):
         _coupling(precision="float32", target="cuda")
+
+
+@pytest.mark.parametrize("precision", ["float32", "float64"])
+@pytest.mark.parametrize("accumulation", ["deterministic", "compensated"])
+def test_compiled_cuda_coupling_values_derivatives_and_resources(
+    precision: str, accumulation: RelationAccumulation
+) -> None:
+    """Real compiled kernels, never interpreter evidence for CUDA admission."""
+    availability = pallas_atomistic_availability("cuda")
+    if not availability.available:
+        pytest.skip(availability.reason)
+    with default_device(jax.devices("gpu")[0]):
+        dtype = np.float64 if precision == "float64" else np.float32
+        tensor_product, source, harmonics, radial = _operands(dtype)
+        coupling = _coupling(precision, accumulation, target="cuda")
+        relation = _relation(accumulation)
+        arguments = (source, harmonics, radial)
+        rng = np.random.default_rng(12)
+        directions = tuple(
+            jnp.asarray(rng.normal(size=value.shape), dtype=dtype) for value in arguments
+        )
+        weights = jnp.asarray(rng.normal(size=(NODES, MESSAGE.packed_size)), dtype=dtype)
+        tolerance = 2e-5 if precision == "float32" else 1e-12
+        derivative_tolerance = 2e-4 if precision == "float32" else 1e-11
+
+        def accelerated(source: Array, harmonics: Array, radial: Array) -> Array:
+            return _accelerated_aggregate(
+                coupling, relation, tensor_product, source, harmonics, radial
+            )
+
+        def reference(source: Array, harmonics: Array, radial: Array) -> Array:
+            return _reference(tensor_product, source, harmonics, radial)
+
+        def transformed(function: Callable[..., Array], *values: Array) -> Any:
+            tangent = jax.jvp(function, values, directions)[1]
+            cotangents = jax.vjp(function, *values)[1](weights)
+
+            def tangent_loss(*operands: Array) -> Array:
+                return jnp.sum(jnp.tanh(jax.jvp(function, operands, directions)[1]))
+
+            def loss(*operands: Array) -> Array:
+                return jnp.sum(jnp.tanh(function(*operands)))
+
+            mixed = jax.grad(tangent_loss, argnums=(0, 1, 2))(*values)
+            hvp = jax.jvp(jax.grad(loss, argnums=(0, 1, 2)), values, directions)[1]
+            return tangent, cotangents, mixed, hvp
+
+        compiled = jax.jit(accelerated).lower(*arguments).compile()
+        observed = jax.block_until_ready(compiled(*arguments))
+        expected = jax.jit(reference)(*arguments)
+        np.testing.assert_allclose(observed, expected, rtol=tolerance, atol=tolerance)
+        np.testing.assert_array_equal(observed[5:], 0.0)
+        assert int(relation.schedule.fragmented_receivers) > 0
+        resource = coupling.resource_evidence(compiled)
+        assert resource.memory_basis == "compiler_analysis"
+        assert resource.per_device_peak_bytes is not None
+        assert resource.per_device_peak_bytes > 0
+        results = [
+            jax.block_until_ready(jax.jit(partial(transformed, function))(*arguments))
+            for function in (accelerated, reference)
+        ]
+        for actual, wanted in zip(
+            jax.tree.leaves(results[0]), jax.tree.leaves(results[1]), strict=True
+        ):
+            np.testing.assert_allclose(
+                actual, wanted, rtol=derivative_tolerance, atol=derivative_tolerance
+            )
+
+        def coefficient_loss(product: O3TensorProduct, *, native: bool) -> Array:
+            output = (
+                _reference(product, *arguments)
+                if native
+                else _accelerated_aggregate(coupling, relation, product, *arguments)
+            )
+            return jnp.sum(weights * jnp.tanh(output))
+
+        gradients = [
+            eqx.filter_jit(eqx.filter_grad(partial(coefficient_loss, native=native)))(
+                tensor_product
+            )
+            for native in (False, True)
+        ]
+        for actual, wanted, table in zip(
+            gradients[0].prepared.coefficients,
+            gradients[1].prepared.coefficients,
+            tensor_product.prepared.coefficients,
+            strict=True,
+        ):
+            support = np.asarray(table) != 0
+            np.testing.assert_allclose(
+                np.asarray(actual)[support],
+                np.asarray(wanted)[support],
+                rtol=derivative_tolerance,
+                atol=derivative_tolerance,
+            )
+
+        def source_hvp(values: Array) -> Array:
+            gradient = jax.grad(
+                lambda rows: jnp.sum(jnp.tanh(accelerated(rows, harmonics, radial)))
+            )
+            return jax.jvp(gradient, (values,), (directions[0],))[1]
+
+        with pytest.raises(MACECouplingDerivativeError, match="through order 2"):
+            jax.jit(
+                lambda values: jax.jvp(source_hvp, (values,), (directions[0],))[1]
+            ).lower(source)
+        with pytest.raises(ValueError, match="fragment budget"):
+            _accelerated_aggregate(
+                _coupling(
+                    precision, accumulation, target="cuda", fragment_budget_bytes=1
+                ),
+                relation,
+                tensor_product,
+                *arguments,
+            )

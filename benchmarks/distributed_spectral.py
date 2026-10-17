@@ -5,14 +5,18 @@
 """Phase-separated distributed full-complex spectral FFT benchmark.
 
 One-device and forced-CPU campaigns are functional evidence only. Physical
-slab and pencil campaigns retain exact observed hardware, process, host,
-topology, and layout evidence; selecting such a campaign does not assert that
-its measurements qualify any machine or release.
+slab and nondegenerate pencil campaigns retain observed hardware evidence.
+Inputs are generated shard-locally, with two changed-input buffers regardless
+of repeat count. A bounded NumPy oracle checks a small transform; full campaign
+round-trip and adjoint checks use native distributed scalar reductions.
+Multi-process runs write one ``.process-N`` output per rank so local allocator
+and retained-buffer measurements remain attributable to every physical device.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import platform
 from dataclasses import asdict
@@ -34,6 +38,7 @@ from benchmarks._runtime import (
     measure_synchronized,
 )
 from phydrax import config as pxconfig
+from phydrax._execution_sampling import sample_device_memory, sample_host_memory
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization.spectral import (
     DistributedSpectralExecutionPlan,
@@ -93,6 +98,8 @@ def _campaign_contract(
     expected_rank = 2 if schedule == "pencil" else 1
     if len(mesh_shape) != expected_rank:
         raise ValueError(f"{schedule} requires a rank-{expected_rank} mesh shape.")
+    if campaign == "physical-pencil" and any(size < 2 for size in mesh_shape):
+        raise ValueError("physical-pencil requires two nondegenerate mesh axes.")
 
     devices = tuple(jax.devices())
     if campaign == "forced-cpu-functional":
@@ -108,26 +115,106 @@ def _campaign_contract(
         raise ValueError(
             "mesh_shape exceeds this process's visible JAX device inventory."
         )
+    if physical and any(device.platform == "cpu" for device in devices[:device_count]):
+        raise ValueError("Physical campaigns require accelerator devices.")
+    if jax.process_count() > 1 and {
+        device.process_index for device in devices[:device_count]
+    } != set(range(jax.process_count())):
+        raise ValueError("The selected spectral mesh must include every JAX process.")
 
 
-def _host_inputs(
-    shape: tuple[int, ...], count: int, dtype: np.dtype[Any]
-) -> tuple[np.ndarray, ...]:
-    grid = np.arange(int(np.prod(shape)), dtype=np.float64).reshape(shape)
-    denominator = float(max(grid.size, 1))
-    values = []
-    for sample in range(count):
-        phase = (sample + 1.0) / denominator
-        real = np.sin((grid + 1.0) * phase)
-        imaginary = np.cos((grid + 0.5) * (phase + 0.125))
-        values.append(np.asarray(real + 1j * imaginary, dtype=dtype))
-    return tuple(values)
+def _input_block(
+    shape: tuple[int, ...],
+    index: tuple[slice, ...] | None,
+    sample: int,
+    dtype: np.dtype[Any],
+) -> np.ndarray:
+    """Generate only one addressable shard, never a global campaign grid."""
+    if index is None:
+        raise ValueError("Spectral input generation requires an explicit shard index.")
+    grid = np.zeros(
+        tuple(len(range(*part.indices(n))) for n, part in zip(shape, index, strict=True)),
+        dtype=np.float64,
+    )
+    stride = 1
+    for axis in reversed(range(len(shape))):
+        coordinates = np.arange(*index[axis].indices(shape[axis]), dtype=np.float64)
+        broadcast = [1] * len(shape)
+        broadcast[axis] = coordinates.size
+        grid += coordinates.reshape(broadcast) * stride
+        stride *= shape[axis]
+    phase = (sample + 1.0) / math.prod(shape)
+    return np.asarray(
+        np.sin((grid + 1.0) * phase) + 1j * np.cos((grid + 0.5) * (phase + 0.125)),
+        dtype=dtype,
+    )
 
 
-def _relative_defect(observed: np.ndarray, expected: np.ndarray) -> float:
-    numerator = float(np.max(np.abs(observed - expected), initial=0.0))
-    denominator = max(float(np.max(np.abs(expected), initial=0.0)), 1.0)
-    return numerator / denominator
+def _placed_input(
+    plan: DistributedSpectralExecutionPlan, sample: int, *, modal: bool = False
+) -> jax.Array:
+    layout = plan.modal_layout if modal else plan.physical_layout
+    return jax.make_array_from_callback(
+        plan.spatial_shape,
+        layout.sharding(plan.topology),
+        lambda index: _input_block(
+            plan.spatial_shape, index, sample, np.dtype(plan.precision.coefficient_dtype)
+        ),
+    )
+
+
+def _distributed_defect(
+    plan: DistributedSpectralExecutionPlan,
+    observed: jax.Array,
+    expected: jax.Array,
+    *,
+    modal: bool,
+) -> float:
+    representation = "modal" if modal else "physical"
+    error = plan.diagnostics(observed - expected, representation=representation)
+    reference = plan.diagnostics(expected, representation=representation)
+    if not bool(error.finite) or not bool(reference.finite):
+        return float("inf")
+    return float(error.maximum_absolute) / max(float(reference.maximum_absolute), 1.0)
+
+
+def _small_numpy_reference(
+    plan: DistributedSpectralExecutionPlan,
+) -> tuple[tuple[int, ...], float]:
+    # Every mesh factor divides each reference dimension, admitting either
+    # transpose schedule without making the oracle grow with the campaign.
+    multiple = math.lcm(*plan.topology.mesh_shape)
+    shape = tuple(min(length, 4 * multiple) for length in plan.spatial_shape)
+    if math.prod(shape) > 65536:
+        raise ValueError("The bounded NumPy reference exceeds 65536 coefficients.")
+    reference = DistributedSpectralExecutionPlan(
+        plan.topology,
+        shape,
+        owner_id=plan.owner_id,
+        precision=plan.precision,
+        admitted_payload_shapes=((),),
+        state_shape=(),
+        schedule=plan.schedule,
+    ).prepare()
+    host = _input_block(
+        shape, (slice(None),) * len(shape), 0, np.dtype(plan.precision.coefficient_dtype)
+    )
+    expected = np.asarray(
+        np.fft.fftn(host, norm="ortho") * reference.transform_scale,
+        dtype=np.dtype(plan.precision.coefficient_dtype),
+    )
+    distributed_expected = jax.make_array_from_callback(
+        shape,
+        reference.modal_layout.sharding(reference.topology),
+        lambda index: expected[index],
+    )
+    defect = _distributed_defect(
+        reference,
+        reference.to_modal(_placed_input(reference, 0)),
+        distributed_expected,
+        modal=True,
+    )
+    return shape, defect
 
 
 def _hardware_evidence(topology: SpectralMeshTopology) -> dict[str, Any]:
@@ -178,7 +265,9 @@ def _run(
     mesh_shape: tuple[int, ...],
     precision_name: Precision,
     repeats: int,
+    maximum_bytes: int,
 ) -> dict[str, Any]:
+    """Keep measurement/evidence in one scope so snapshots share buffer lifetimes."""
     if len(shape) < 2:
         raise ValueError("distributed C2C campaigns require spatial rank at least two.")
     _campaign_contract(campaign, schedule, mesh_shape)
@@ -197,23 +286,36 @@ def _run(
         admitted_payload_shapes=((),),
         state_shape=(),
         schedule=schedule,
+        maximum_bytes=maximum_bytes,
     ).prepare()
-    host_values, host_preparation_seconds = measure_host(
-        lambda: _host_inputs(shape, repeats + 3, np.dtype(precision.coefficient_dtype))
+    baseline_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
+    placed, generation_placement_seconds = measure_synchronized(
+        lambda: _placed_input(plan, 0)
     )
-    placed, placement_seconds = measure_synchronized(
-        lambda: plan.place(host_values[0], representation="physical")
+    warm_placed, warm_generation_placement_seconds = measure_synchronized(
+        lambda: tuple(_placed_input(plan, sample) for sample in (1, 2))
     )
-    warm_placed, warm_placement_seconds = measure_synchronized(
-        lambda: tuple(
-            plan.place(value, representation="physical")
-            for value in host_values[1 : repeats + 1]
-        )
-    )
+    placed_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
     transformed = jax.jit(plan.to_modal)
     compiled, compilation = measure_lower_and_compile(
         lambda: transformed.lower(placed), lambda lowered: lowered.compile()
     )
+    compiled_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
     first, first_seconds = measure_synchronized(lambda: compiled(placed))
     warm_index = 0
 
@@ -230,24 +332,31 @@ def _run(
         compiled.cost_analysis(), compiled.memory_analysis(), source="xla"
     )
 
-    # These checks are intentionally independent of the timed executable path:
-    # NumPy supplies the full-complex oracle and complex128 host accumulations.
-    first_host = np.asarray(first)
-    expected = np.fft.fftn(host_values[0], norm="ortho") * plan.transform_scale
-    numerical_defect = _relative_defect(first_host, expected)
-    round_trip = np.asarray(plan.to_physical(first))
-    round_trip_defect = _relative_defect(round_trip, host_values[0])
-    adjoint_probe = host_values[repeats + 1]
-    placed_probe = plan.place(adjoint_probe, representation="modal")
-    inverse_probe = np.asarray(plan.to_physical(placed_probe))
-    lhs = np.vdot(first_host.astype(np.complex128), adjoint_probe.astype(np.complex128))
-    rhs = np.vdot(
-        host_values[0].astype(np.complex128),
-        (plan.transform_scale * plan.transform_scale * inverse_probe).astype(
-            np.complex128
-        ),
+    runtime_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
+    # Only replicated scalar diagnostics cross to the host, including on
+    # multi-process runs whose scientific arrays are not fully addressable.
+    reference, reference_seconds = measure_host(lambda: _small_numpy_reference(plan))
+    reference_shape, numerical_defect = reference
+    round_trip_defect = _distributed_defect(
+        plan, plan.to_physical(first), placed, modal=False
+    )
+    placed_probe = _placed_input(plan, 3, modal=True)
+    lhs = complex(plan.global_inner_product(first, placed_probe))
+    rhs = (
+        complex(
+            plan.global_inner_product(
+                placed, plan.to_physical(placed_probe), representation="physical"
+            )
+        )
+        * plan.transform_scale**2
     )
     adjoint_defect = float(abs(lhs - rhs) / max(abs(lhs), abs(rhs), 1.0))
+    tolerance = 5.0e-5 if precision_name == "float32" else 1.0e-11
 
     return {
         "campaign": campaign,
@@ -288,9 +397,11 @@ def _run(
             "collective_count": plan.report.collective_count,
         },
         "timing": {
-            "host_preparation_seconds": host_preparation_seconds,
-            "placement_seconds": placement_seconds,
-            "warm_changed_input_placement_seconds": warm_placement_seconds,
+            "bounded_numpy_reference_seconds": reference_seconds,
+            "generate_and_place_seconds": generation_placement_seconds,
+            "warm_changed_input_generate_and_place_seconds": (
+                warm_generation_placement_seconds
+            ),
             "lowering_seconds": compilation.lowering_seconds,
             "compilation_seconds": compilation.compilation_seconds,
             "first_synchronized_seconds": first_seconds,
@@ -299,6 +410,20 @@ def _run(
         "memory": {
             "logical_input_bytes": logical_array_bytes(placed),
             "logical_output_bytes": logical_array_bytes(warm_result),
+            "baseline": baseline_memory,
+            "after_warm_execution": runtime_memory,
+            "after_placement": placed_memory,
+            "after_compilation": compiled_memory,
+            "after_validation": {
+                "host": sample_host_memory().to_payload(),
+                "devices": [
+                    sample.to_payload()
+                    for sample in sample_device_memory(jax.local_devices())
+                ],
+            },
+            "retained_changed_input_count": len(warm_placed),
+            "retained_changed_input_bytes": logical_array_bytes(warm_placed),
+            "scope": "process-local samples; allocator peaks are since process start",
             "compiler": asdict(compiler),
             "logical_resource_report": {
                 "canonical_storage_bytes": plan.report.resource.canonical_storage_bytes,
@@ -310,10 +435,21 @@ def _run(
             },
         },
         "defects": {
-            "independent_numpy_forward_relative_linf": numerical_defect,
-            "independent_numpy_round_trip_relative_linf": round_trip_defect,
-            "independent_complex128_adjoint_relative": adjoint_defect,
+            "bounded_numpy_forward_relative_linf": numerical_defect,
+            "distributed_round_trip_relative_linf": round_trip_defect,
+            "distributed_adjoint_relative": adjoint_defect,
         },
+        "reference": {
+            "shape": list(reference_shape),
+            "maximum_coefficients": 65536,
+            "campaign_payload_host_gather": False,
+            "reduction_dtype": precision.reduction_dtype,
+        },
+        "passed": all(
+            np.isfinite(defect) and defect <= tolerance
+            for defect in (numerical_defect, round_trip_defect, adjoint_defect)
+        ),
+        "tolerance": tolerance,
         "hardware_process_host_evidence": _hardware_evidence(topology),
         "qualification": {
             "claimed": False,
@@ -335,6 +471,12 @@ def main() -> None:
     parser.add_argument("--precision", default="float32")
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument(
+        "--maximum-bytes",
+        type=int,
+        default=1 << 31,
+        help="Native plan budget; extra benchmark buffers are reported separately.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=PROJECT_ROOT / "benchmarks" / "distributed_spectral.json",
@@ -350,6 +492,7 @@ def main() -> None:
         "mesh_shape": list(arguments.mesh_shape),
         "precision": precision,
         "repeats": arguments.repeats,
+        "maximum_bytes": arguments.maximum_bytes,
     }
     row = _run(
         campaign,
@@ -358,6 +501,7 @@ def main() -> None:
         arguments.mesh_shape,
         precision,
         arguments.repeats,
+        arguments.maximum_bytes,
     )
     record: dict[str, Any] = {
         "configuration": configuration,
@@ -373,7 +517,14 @@ def main() -> None:
             "configuration": configuration,
         }
     )
-    write_json_atomic(arguments.output, record)
+    output = arguments.output
+    if jax.process_count() > 1:
+        output = output.with_name(
+            f"{output.stem}.process-{jax.process_index()}{output.suffix}"
+        )
+    write_json_atomic(output, record)
+    if not row["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

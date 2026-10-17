@@ -88,6 +88,15 @@ partitions without discovering or loading other components. Each partition
 reports its component, device, partition key, live entries, declared capacity,
 and counted rebuilds. Native state is released by the owned process-exit handler.
 
+cuDSS and AmgX memo partitions are device-local. AmgX also owns its cuBLAS and
+cuSPARSE handles per device; switching devices does not recreate those handles.
+Provider calls remain serialized and do not constitute a distributed solve.
+Releasing a live preparation retires its named memo. Reusing a released or
+evicted immutable preparation rebuilds under a fresh native ID without changing
+the preparation's token; releasing that stale token cannot retire the rebuilt
+entry. Reconstructed entries remain bounded by the device/plan cache capacity
+and are reclaimed by eviction or component shutdown.
+
 ::: phydrax.backends.cuda_native_resources
 
 ---
@@ -165,6 +174,21 @@ the independent launcher-detected Phydrax/JAX distributed bootstrap when both
 ranks deliberately share one GPU. Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` for
 that deployment. The CUDA MPI integration test accepts a matching launcher
 (and deployment-specific flags) through `PHYDRAX_MPI_LAUNCHER`.
+
+The pinned mpi4jax transformation contract is narrower than a generic transpose
+of stacked rank outputs: SUM JVP reduces tangents, while SUM VJP returns the
+rank-local cotangent; mean VJP divides that local cotangent by communicator size.
+The default same-shape `sendrecv` path supports VJP. Its receive argument is
+read-only shape/dtype metadata, so Phydrax reuses the input rather than creating
+an AD-inactive zero placeholder. Other explicitly supplied receive-buffer
+differentiation combinations are not qualified by these checks.
+MAX/MIN differentiation and forward-mode `sendrecv` remain unsupported and
+refuse explicitly. Use the JIT dispatcher for ordered MPI effects; repeated
+AOT `Compiled.__call__` execution loses an effect token in JAX 0.11.2 and is not
+a qualified entry point.
+The [two-A100 qualification](../installation.md#two-a100-results) distinguishes
+large CUDA-IPC exchanges from SUM's internal host staging; `gpu_direct=True`
+does not promise GPU-resident reduction.
 
 Vendor profiles are admission envelopes rather than blanket qualification:
 

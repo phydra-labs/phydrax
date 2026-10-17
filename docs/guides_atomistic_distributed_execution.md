@@ -313,9 +313,52 @@ lane reference is a numerical oracle: for two- and three-layer native MACE it is
 compared with an independent single-device global MACE on brute-force image routes. It
 is not hardware evidence. Omitting `owner_lanes` maps one owner per device of the
 `ExecutionGroup` through `shard_map`. On forced host CPU devices
-(`JAX_NUM_CPU_DEVICES=2`) that route demonstrates
-functional collective parity only. Multi-host, GPU, and performance tuples are
-unqualified.
+(`JAX_NUM_CPU_DEVICES=2`) that route demonstrates functional collective parity only.
+These CPU results are not GPU or multi-host qualification; physical measurements
+remain scoped to the recorded hardware and workload.
+
+`benchmarks/distributed_mace_scaling.py --owners devices --owner-counts 1 2`
+measures native-JAX owner-local execution on the devices actually selected; the
+record labels CPU, lane-reference, and physical accelerator evidence separately.
+The benchmark is single-process only because preparation uses global host ingress.
+It is not evidence for accelerated Pallas MACE or multi-host execution.
+
+Use `--total-atoms N` for fixed-global-size rows and `--atoms-per-owner N` for
+fixed-local-size rows, varying these capacities across campaigns. Fixed-global
+rows reuse the same initial configuration for each owner count. Records separate
+preparation, lowering, compilation, first/warmed evaluation, transactional migration,
+and post-migration evaluation, with compiler and process-local memory evidence.
+Each multi-owner row forces a real ownership crossing and requires successful
+commit and evaluation. Run without competing work; allocator peaks are cumulative
+within the process, not independently reset for each row.
+The shared synchronizer releases intermediate repeat results without requiring
+cyclic garbage collection. Post-migration timing is the public API call, including
+any dispatch or compilation on that path, not a warmed compiled replay.
+
+The A100-SXM4-80GB NVLink campaign used two-layer native-JAX MACE, JAX/JAXlib
+0.11.2, CUDA 13, and five synchronized warmed repeats without competing task
+workloads. The table reports evaluation medians in milliseconds, not complete
+simulation-step latency.
+
+| Campaign | Atoms on one GPU | Atoms on two GPUs | One GPU | Two GPUs |
+| --- | ---: | ---: | ---: | ---: |
+| Fixed total | 128 | 128 | 45.121 | 42.014 |
+| Fixed total | 512 | 512 | 170.104 | 107.035 |
+| Fixed total | 2048 | 2048 | 739.855 | 363.964 |
+| Fixed per owner | 48 | 96 | 22.466 | 35.134 |
+| Fixed per owner | 192 | 384 | 65.717 | 91.258 |
+| Fixed per owner | 768 | 1536 | 259.061 | 275.383 |
+
+Every row passed its evaluation and rebuild/commit gates. Each two-owner row
+migrated atoms; the 2048-atom row migrated 25. Small workloads have substantial
+communication overhead. At 768 atoms per owner, doubling total atoms increased
+evaluation latency by 6.3%.
+`benchmarks/distributed_mace_scaling.json` retains the largest fixed-total and
+fixed-per-owner cases, raw samples, compiler memory, logical state bytes, and
+process-local observations. For 2048 atoms on two GPUs, preparation took 14.566 s,
+lowering 4.439 s, compilation 16.250 s, rebuild 7.291 s, and the public
+post-migration call 21.780 s. Reusing prepared execution is essential; the warmed
+table must not be interpreted as end-to-end migration throughput.
 
 ### Dynamics, migration, and model updates
 

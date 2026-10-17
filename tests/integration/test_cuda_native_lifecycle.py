@@ -79,7 +79,9 @@ print(json.dumps({"preloaded": component.preloaded, "mapped": [(item.path, item.
 _HOSTILE_LIBRARY_PATH = "/usr/local/cuda/lib64"
 
 
-def _run(component: str, *, hostile: bool) -> subprocess.CompletedProcess[str]:
+def _run(
+    component: str, *, hostile: bool, device_count: int
+) -> subprocess.CompletedProcess[str]:
     environment = {
         **os.environ,
         "OMP_NUM_THREADS": "1",
@@ -89,6 +91,29 @@ def _run(component: str, *, hostile: bool) -> subprocess.CompletedProcess[str]:
         environment["LD_LIBRARY_PATH"] = _HOSTILE_LIBRARY_PATH
     source = f"COMPONENT = {component!r}\nHOSTILE = {hostile!r}\n" + _SETUP
     operations = _OPERATIONS[component]
+    if device_count == 2:
+        operations = (
+            "from phydrax._jax_config import default_device\n"
+            "devices = jax.devices('gpu')[:2]\n"
+            "if len(devices) < 2:\n"
+            "    print('Native exit qualification requires two CUDA devices')\n"
+            "    raise SystemExit(77)\n"
+            "retained = []\n"
+            "for device in devices:\n"
+            "    with default_device(device):\n"
+            + indent(operations, "        ")
+            + "\n        retained.append((prepared, result))\n"
+            "partitions = [p for p in cuda_native_resources().partitions "
+            "if p.component == COMPONENT and p.live > 0]\n"
+            "assert {p.device for p in partitions} == {d.id for d in devices}\n"
+            "assert len({p.partition for p in partitions}) == 1\n"
+        )
+        operations = (
+            operations + "\nfrom phydrax._cuda_native import _shutdown\n"
+            "_shutdown()\n"
+            "assert not any(p.live for p in cuda_native_resources().partitions)\n"
+            + operations
+        )
     if hostile:
         operations += _AUDIT
     source += "\nwith config.context(config.NumericsConfig(enable_x64=True)):\n"
@@ -104,12 +129,16 @@ def _run(component: str, *, hostile: bool) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.cuda_native
-@pytest.mark.parametrize("component", ["cudss", "amgx", "quda"])
+@pytest.mark.parametrize(
+    ("component", "device_count"),
+    [("cudss", 1), ("amgx", 1), ("quda", 1), ("cudss", 2), ("amgx", 2)],
+    ids=["cudss", "amgx", "quda", "cudss-two-devices", "amgx-two-devices"],
+)
 @pytest.mark.parametrize("hostile", [False, True], ids=["normal", "hostile-library-path"])
 def test_exit_with_live_native_state_and_inflight_work(
-    component: str, hostile: bool
+    component: str, hostile: bool, device_count: int
 ) -> None:
-    result = _run(component, hostile=hostile)
+    result = _run(component, hostile=hostile, device_count=device_count)
     if result.returncode == 77:
         pytest.skip(result.stdout.strip())
     if result.returncode == 78:

@@ -134,6 +134,25 @@ class MortonPlaneInteractionPlan(StrictModule):
             raise ValueError("opening_angle must lie strictly between zero and one.")
         if queue < 1 or far < 1 or near < 1:
             raise ValueError("Dual-tree interaction capacities must be positive.")
+        # Count every refinement's candidates before narrowing runtime counters.
+        source_children = source_schedule_plan.coarsening_factor
+        target_children = target_plan.coarsening_factor
+        expanded_capacity = queue * max(source_children, target_children)
+        far_count_bound = queue * (
+            1
+            + (source_schedule_plan.plane_count - 1) * source_children
+            + (target_plan.plane_count - 1) * target_children
+        )
+        seed_capacity = (
+            source_schedule_plan.plane_capacities[-1] * target_plan.plane_capacities[-1]
+        )
+        if (
+            max(queue, far, near, expanded_capacity, far_count_bound, seed_capacity)
+            > jnp.iinfo(jnp.int32).max
+        ):
+            raise ValueError(
+                "Dual-tree interaction capacities and traversal counters must fit in int32."
+            )
         widths = (queue,) if frontier_widths is None else frontier_widths
         if (
             not isinstance(widths, tuple)
