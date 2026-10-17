@@ -358,16 +358,32 @@ It is not qualified automatically:
 coupling. The kernels are written once for Pallas Mosaic GPU with 128-lane
 warpgroup channel tiles:
 
-- `"cuda"` admits NVIDIA devices with compute capability 9.0 or 12.0, not every
-  architecture above a numeric minimum. `pallas_atomistic_availability("cuda")`
-  identifies CUDA from the runtime, including JAX clients labeled `"gpu"`, and
-  refuses other devices with a reason. The Lane kernels execute on RTX 5090
-  (12.0) with JAX/JAXlib 0.11.2 and the CUDA 13 plugin; this is correctness
-  evidence for that configuration, not a general GPU performance or memory
-  qualification. Forward and operand derivatives agree with native JAX at
-  float32 tolerances `rtol=atol=2e-5` (reverse mode `rtol=2e-4`) under
-  Phydrax's full-precision float32 contraction default; float64 forward agrees
-  at `rtol=atol=1e-12`.
+- `"cuda"` admits NVIDIA devices with compute capability 8.0, 9.0, or 12.0,
+  not every architecture above a numeric minimum (8.6 and 8.9 remain refused).
+  `pallas_atomistic_availability("cuda")` identifies CUDA from the runtime,
+  including JAX clients labeled `"gpu"`, and refuses other devices with a
+  reason. The Lane kernels use no Hopper-only WGMMA or TMA instructions.
+- A100-SXM4-80GB (8.0) was exercised with JAX/JAXlib 0.11.2, the CUDA 13 plugin,
+  CUDA runtime 13.4, and NVIDIA driver 580.159.04. Actual compiled receiver,
+  source, radial, harmonic, and coefficient kernels agree with native JAX for
+  float32 and float64 under both deterministic and compensated accumulation.
+  This includes forward, all-operand JVP/VJP, reverse-over-forward mixed
+  derivatives, and forward-over-reverse Hessian-vector products through order
+  two. The tolerances are `rtol=atol=2e-5` for float32 forward and `2e-4` for
+  float32 derivatives, and `1e-12` for float64 forward and `1e-11` for float64
+  derivatives. Phydrax's full-precision float32 contraction default is retained.
+  The public streamed route also exercised split receivers, runtime-inactive
+  and structurally invalid lanes, duplicate endpoints, empty receivers, and
+  refusal of insufficient fragment budgets and third-order derivatives.
+  XLA compiled-memory analysis is available for these transformed routes; it
+  does not measure register/shared-memory use or establish graph-scale memory
+  or performance claims. This is evidence for the exercised tuple, not every
+  Ampere device, older JAX release, or distributed accelerated MACE.
+- RTX 5090 (12.0) was exercised with JAX/JAXlib 0.11.2 and the CUDA 13 plugin.
+  Forward and operand derivatives agree with native JAX at float32 tolerances
+  `rtol=atol=2e-5` (reverse mode `rtol=2e-4`); float64 forward agrees at
+  `rtol=atol=1e-12`. This is correctness evidence for that configuration, not
+  a general GPU performance or memory qualification.
 - `"cpu_interpret"` runs the same kernel bodies through the Mosaic GPU
   interpreter on CPU. It is semantic reference verification only. It is never
   GPU correctness, performance, or memory evidence.

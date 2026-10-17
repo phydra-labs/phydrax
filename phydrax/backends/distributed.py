@@ -376,7 +376,9 @@ class Mpi4JaxCollectiveProvider:
         recvtag: int = 0,
     ) -> Array:
         mpi4jax, _ = self._modules()
-        receive = jnp.zeros_like(value) if receive_buffer is None else receive_buffer
+        # mpi4jax does not overwrite this shape/dtype placeholder. Reusing the
+        # input avoids an allocation and preserves its supported VJP path.
+        receive = value if receive_buffer is None else receive_buffer
         return mpi4jax.sendrecv(
             value,
             receive,

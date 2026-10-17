@@ -508,3 +508,57 @@ def test_amgx_release_is_idempotent_and_preparation_rebuilds(
         assert _amgx_partition(prepared).live == 1
     finally:
         amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+def test_amgx_same_plan_isolated_across_two_devices(native_amgx: None) -> None:
+    from phydrax._jax_config import default_device
+
+    devices = jax.devices("gpu")[:2]
+    if len(devices) < 2:
+        pytest.skip("Same-plan AmgX qualification requires two CUDA devices")
+    prepared: list[amg.PreparedAmgX] = []
+    matrices: list[jax.Array] = []
+    forcings: list[jax.Array] = []
+    policy = amg.AmgXPolicy(hierarchy_cache_capacity=1)
+    try:
+        for index, device in enumerate(devices):
+            with default_device(device):
+                problem, matrix, rhs = _poisson_problem(
+                    operator_id="amgx-same-plan-two-devices"
+                )
+                scale = index + 1
+                problem = eqx.tree_at(
+                    lambda item: item.operator.coefficients,
+                    problem,
+                    problem.operator.coefficients * scale,
+                )
+                matrices.append(matrix * scale)
+                forcings.append(rhs)
+                prepared.append(amg.prepare_amgx(problem, amg.plan_amgx(problem, policy)))
+        assert prepared[0].plan.plan_id == prepared[1].plan.plan_id
+        for index, device in enumerate(devices):
+            with default_device(device):
+                result = eqx.filter_jit(amg.solve_amgx)(prepared[index], forcings[index])
+                _assert_dense_parity(result, matrices[index], forcings[index])
+                assert result.value.devices() == {device}
+                assert result.diagnostics.native_rebuilds is not None
+                assert int(result.diagnostics.native_rebuilds) == 0
+        partitions = [
+            entry
+            for entry in phx.backends.cuda_native_resources().partitions
+            if entry.component == "amgx" and entry.partition == prepared[0].partition
+        ]
+        assert {(entry.device, entry.live, entry.capacity) for entry in partitions} == {
+            (device.id, 1, 1) for device in devices
+        }
+        amg.release_amgx(prepared[0])
+        with default_device(devices[1]):
+            result = amg.solve_amgx(prepared[1], forcings[1])
+            _assert_dense_parity(result, matrices[1], forcings[1])
+            assert result.diagnostics.native_rebuilds is not None
+            assert int(result.diagnostics.native_rebuilds) == 0
+    finally:
+        for item in prepared:
+            amg.release_amgx(item)
+    assert _amgx_live_count(prepared[0]) == 0

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -500,6 +501,101 @@ def test_addressable_checkpoint_publishes_once_and_restores_directly(
     np.testing.assert_array_equal(np.asarray(child_restored), np.arange(12) + 1.0)
 
 
+def test_checkpoint_ownership_change_requires_new_root(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    value = jnp.arange(4, dtype=jnp.float64)
+    publish_process_checkpoint(
+        repository,
+        "source",
+        "source-execution",
+        {"value": value},
+        analysis_plan_id="source-analysis",
+        numeric_revision_id="physics",
+        writer_id="source-writer",
+    )
+    source = assemble_distributed_checkpoint_from_repository(
+        repository,
+        "source",
+        "source-analysis",
+        "physics",
+        "source-execution",
+        expected_process_count=1,
+    )
+    with pytest.raises(ValueError, match="wrong execution ownership"):
+        publish_process_checkpoint(
+            repository,
+            "invalid-child",
+            "target-execution",
+            {"value": value},
+            analysis_plan_id="target-analysis",
+            numeric_revision_id="physics",
+            writer_id="invalid-writer",
+            parent_manifest=source,
+        )
+    publish_process_checkpoint(
+        repository,
+        "target",
+        "target-execution",
+        {"value": value},
+        analysis_plan_id="target-analysis",
+        numeric_revision_id="physics",
+        writer_id="target-writer",
+    )
+    with pytest.raises(ValueError, match="incompatible lifecycle ownership"):
+        assemble_distributed_checkpoint_from_repository(
+            repository,
+            "target",
+            "target-analysis",
+            "physics",
+            "target-execution",
+            expected_process_count=1,
+            parent_manifest=source,
+        )
+    target = assemble_distributed_checkpoint_from_repository(
+        repository,
+        "target",
+        "target-analysis",
+        "physics",
+        "target-execution",
+        expected_process_count=1,
+        diagnostic_ids=(source.manifest_id, "accepted-transition", "stable-id-migration"),
+    )
+    assert target.parent_manifest_id is None
+    assert target.parent_checkpoint_id is None
+    assert source.manifest_id in target.diagnostic_ids
+    restored = restore_global_array_from_checkpoint(
+        repository, target, "['value']", value.sharding
+    )
+    np.testing.assert_array_equal(restored, value)
+    with pytest.raises(ValueError, match="incompatible lifecycle ownership"):
+        restore_global_array_from_checkpoint(
+            repository,
+            target,
+            "['value']",
+            value.sharding,
+            parent_manifest=source,
+        )
+    forged_parent = CheckpointManifest(
+        source.checkpoint_id,
+        target.analysis_plan_id,
+        target.numeric_revision_id,
+        target.execution_plan_id,
+        source.shards,
+        complete=True,
+    )
+    with pytest.raises(RepositoryCorruptionError, match="artifact ownership"):
+        publish_process_checkpoint(
+            repository,
+            "forged-child",
+            target.execution_plan_id,
+            {"value": value},
+            analysis_plan_id=target.analysis_plan_id,
+            numeric_revision_id=target.numeric_revision_id,
+            writer_id="forged-writer",
+            parent_manifest=forged_parent,
+        )
+
+
 def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_allocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -675,3 +771,68 @@ def test_local_launch_rank_projection_retains_disjoint_device_ids() -> None:
     assert second["PHYDRAX_LOCAL_DEVICE_IDS"] == "2,3"
     assert first["PHYDRAX_COORDINATOR_BIND_ADDRESS"] == "127.0.0.1:1234"
     assert "PHYDRAX_COORDINATOR_BIND_ADDRESS" not in second
+
+
+@pytest.mark.parametrize(
+    ("platform", "cpu_devices"),
+    [("cpu", 1), ("cpu", 2), ("gpu", 1)],
+    ids=["one-cpu-per-rank", "two-cpus-per-rank", "distinct-gpus"],
+)
+def test_local_substrate_launcher_preserves_device_ownership(
+    platform: str, cpu_devices: int
+) -> None:
+    if platform == "gpu" and (
+        jax.default_backend() != "gpu" or jax.local_device_count() < 2
+    ):
+        pytest.skip("requires two visible GPUs")
+    root = Path(__file__).parents[2]
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            platforms=("cpu",) if platform == "cpu" else ("cuda",),
+            cpu_device_count=cpu_devices,
+            cpu_collectives_implementation="gloo",
+        )
+    )
+    environment.update(
+        PYTHONPATH=str(root),
+        XLA_PYTHON_CLIENT_PREALLOCATE="false",
+        OMP_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.distributed_substrate_benchmark",
+            "--local-processes",
+            "2",
+            "--devices-per-process",
+            "1",
+            "--size",
+            "17",
+            "--iterations",
+            "1",
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(completed.stdout.strip().splitlines()[-1])
+    runtime = report["runtime"]
+    local_count = cpu_devices if platform == "cpu" else 1
+    assert runtime["process_count"] == 2
+    assert runtime["global_device_count"] == 2 * local_count
+    assert runtime["local_device_count"] == local_count
+    assert runtime["local_hardware_ids_by_process"] == (
+        [list(range(cpu_devices)), list(range(cpu_devices))]
+        if platform == "cpu"
+        else [[0], [1]]
+    )
+    assert report["problem"]["group_identity_consistent"]
+    assert report["weighted_mean"]["absolute_error"] < 1.0e-12
+    assert report["distributed_pcg"]["converged"]
+    assert report["distributed_pcg"]["maximum_solution_error"] < 1.0e-12

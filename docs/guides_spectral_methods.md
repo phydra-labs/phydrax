@@ -712,6 +712,69 @@ topology, layout, stage-sequence, precision, payload, resource, host, and proces
 evidence. Neither a passing candidate nor one-device parity authorizes release or
 performance/scaling claims.
 
+The benchmark generates each addressable input shard directly instead of gathering
+the campaign grid on the host. Its independent NumPy oracle is capped at 65,536
+coefficients; full-size round-trip and adjoint checks use distributed scalar
+reductions. Two changed-input buffers are retained regardless of the repeat count.
+Shared benchmark synchronization releases completed intermediate outputs without
+waiting for cyclic garbage collection; only duration samples and the last repeated
+result are retained.
+`generate_and_place_seconds` combines host shard synthesis and device placement;
+lowering, compilation, first execution, and warmed execution remain separate.
+Allocator peaks are process-lifetime observations, not per-phase deltas.
+
+`--maximum-bytes` sets the native plan's explicit resource ceiling (2 GiB by
+default). It does not budget the entire benchmark process: reserve additional
+space for the two changed-input buffers and validation arrays. Memory snapshots
+include the validation phase as well as warmed execution. Keep this ceiling below
+the actual allocator budget when increasing the global grid.
+
+For a two-GPU slab measurement, use a physical campaign and an explicit mesh:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 python -m benchmarks.distributed_spectral \
+  --campaign physical-slab --schedule slab --shape 128,128,128 \
+  --mesh-shape 2 --precision float64 --repeats 5 \
+  --output /tmp/spectral-two-gpu.json
+```
+
+Compare the same global shape with `--campaign one-device-functional --mesh-shape 1`
+for strong scaling; grow the global shape in proportion to device count for weak
+scaling. Use fresh processes and no competing workloads. A two-process launch must
+assign one GPU per rank; output paths acquire `.process-N` suffixes. A physical
+pencil campaign requires two nondegenerate mesh axes, so two GPUs are insufficient.
+Generate the repository's real dependency lock with `uv lock` before capturing
+benchmark source/build identity.
+
+The measured A100-SXM4-80GB NVLink campaign used JAX/JAXlib 0.11.2, CUDA 13,
+seven synchronized repeats, fresh processes, disabled persistent compilation
+caching, and no competing task workloads. The native plan budget was 16 GiB.
+These are warmed forward-transform medians in milliseconds; the two-process
+column takes the larger rank median, with one physical GPU assigned to each rank.
+
+| Precision | Global grid | One GPU | Two GPUs, one process | Two GPUs, two processes |
+| --- | --- | ---: | ---: | ---: |
+| float32 | 128³ | 0.324 | 0.471 | — |
+| float32 | 256³ | 1.335 | 1.258 | — |
+| float32 | 512³ | 8.964 | 7.261 | — |
+| float64 | 128³ | 0.513 | 0.584 | — |
+| float64 | 256³ | 2.404 | 2.171 | 2.056 |
+| float64 | 512³ | 17.603 | 13.883 | 13.818 |
+
+Small grids do not amortize distribution. With coefficients per GPU fixed,
+growing 256³ on one GPU to 512×256×256 on two GPUs increased median latency by
+59% for float32 and 63% for float64; this is not ideal weak scaling.
+All bounded-reference, full-grid round-trip, and adjoint gates passed, with
+maximum relative defects below 1.15e-6 and 2.72e-15, respectively.
+The representative `benchmarks/distributed_spectral.json` records the float64
+512³ two-GPU, one-process case, including raw samples and every memory phase.
+Its XLA-reported temporary and output allocations are each 1 GiB per partition;
+the observed allocator peak through validation is 12 GiB per GPU. Compiler
+generated-code bytes exclude vendor library binaries.
+The two-process runs completed successfully but emitted JAX/PJRT
+`WatchTasksAsync` connection-refused warnings during shutdown; these are retained,
+not suppressed. These measurements do not qualify multi-host or pencil execution.
+
 Consumer boundaries remain distinct. Distributed LES admits exactly `()`, `(3,)`,
 and `(3, 3)` and owns its live closure/method/checkpoint reservation. PSATD derives
 every exact `(1, C)` payload from its configured static features and transform

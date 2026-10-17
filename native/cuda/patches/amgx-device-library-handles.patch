@@ -1,0 +1,94 @@
+# Upstream: https://github.com/NVIDIA/AMGX/tree/91a8413
+# State: local independent-device cuBLAS/cuSPARSE handle ownership fix.
+# Remove when the pinned upstream owns library handles per CUDA device.
+--- a/include/amgx_cublas.h
++++ b/include/amgx_cublas.h
+@@ -10,6 +10,7 @@
+ #include <matrix.h>
+ #include <vector.h>
+ #include <types.h>
++#include <map>
+ 
+ namespace amgx
+ {
+@@ -33,7 +34,7 @@
+ class Cublas
+ {
+     private:
+-        static cublasHandle_t m_handle;
++        static std::map<int, cublasHandle_t> m_handles;
+         // Private ctor to prevent instantiation.
+         Cublas();
+         ~Cublas();
+@@ -42,6 +43,10 @@
+         // Get the handle.
+         static cublasHandle_t get_handle()
+         {
++            int device;
++            const auto status = cudaGetDevice(&device);
++            if (status != cudaSuccess) FatalError(cudaGetErrorString(status), AMGX_ERR_CUDA_FAILURE);
++            auto &m_handle = m_handles[device];
+             if (m_handle == 0)
+             {
+                 cublasCheckError(cublasCreate(&m_handle));
+@@ -52,12 +57,18 @@
+ 
+         static void destroy_handle()
+         {
++            int device;
++            const auto status = cudaGetDevice(&device);
++            if (status != cudaSuccess) FatalError(cudaGetErrorString(status), AMGX_ERR_CUDA_FAILURE);
++            auto found = m_handles.find(device);
++            if (found == m_handles.end()) return;
++            auto &m_handle = found->second;
+             if (m_handle != 0)
+             {
+                 cublasCheckError(cublasDestroy(m_handle));
+             }
+ 
+-            m_handle = 0;
++            m_handles.erase(found);
+         }
+ 
+         static void set_pointer_mode_device();
+--- a/src/amgx_cublas.cu
++++ b/src/amgx_cublas.cu
+@@ -9,7 +9,7 @@
+ namespace amgx
+ {
+ 
+-cublasHandle_t Cublas::m_handle = 0;
++std::map<int, cublasHandle_t> Cublas::m_handles;
+ 
+ namespace
+ {
+--- a/src/amgx_cusparse.cu
++++ b/src/amgx_cusparse.cu
+@@ -3,6 +3,7 @@
+ // SPDX-License-Identifier: BSD-3-Clause
+ 
+ #include <cusparse_v2.h>
++#include <map>
+ #include <error.h>
+ #include <matrix.h>
+ #include <vector.h>
+@@ -40,9 +41,16 @@
+ 
+ Cusparse &Cusparse::get_instance()
+ {
+-    static Cusparse s_instance;
+-    s_instance.create_handle();
+-    return s_instance;
++    int device;
++    const auto status = cudaGetDevice(&device);
++    if (status != cudaSuccess) FatalError(cudaGetErrorString(status), AMGX_ERR_CUDA_FAILURE);
++    // Resource teardown destroys handles on their owning devices. Retain only
++    // the singleton metadata past CUDA/JAX teardown, never CUDA destructors.
++    static auto *instances = new std::map<int, Cusparse *>;
++    auto &instance = (*instances)[device];
++    if (instance == nullptr) instance = new Cusparse;
++    instance->create_handle();
++    return *instance;
+ }
+ 
+ template< class TConfig >

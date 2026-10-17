@@ -16,6 +16,7 @@ from phydrax.applications.cosmology._wave_amr import (
     WaveAMRAdaptivityPlan,
     WaveAMRDiscretizationPlan,
     WaveAMRPhysicsPlan,
+    WaveAMRState,
 )
 from phydrax.lifecycle import assemble_distributed_checkpoint_from_repository
 from phydrax.lifecycle._repository import (
@@ -145,6 +146,7 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
     tmp_path: Any,
     monkeypatch: Any,
 ) -> None:
+    """One accepted-state lifecycle binds restart, topology, and repartition evidence."""
     hierarchy, prepared, state = _problem()
     group = _execution_group(jax.devices()[:2])
     partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
@@ -255,7 +257,12 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
     for actual, expected_level in zip(restarted.psi, expected.psi, strict=True):
         np.testing.assert_array_equal(actual, expected_level)
 
-    proposal = prepared.propose_topology(state)
+    checkpointed_authority = WaveAMRState(
+        restored_authority,
+        result.state.scale_factor,
+        result.state.accepted_boundary,
+    )
+    proposal = prepared.propose_topology(checkpointed_authority)
     assert proposal.successful and proposal.compilation.status.changed
     successor = prepared.plan.prepare(
         prepared.physics,
@@ -267,11 +274,8 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         maximum_bytes=100_000_000,
         execution_group=group,
     )
-    topology_state = source.execution.bind_packed_state(
-        initial_packed,
-        state.scale_factor,
-    )
-    authority_transition = prepared.transition(state, proposal)
+    topology_state = result.state
+    authority_transition = prepared.transition(checkpointed_authority, proposal)
     transitioned = prepared.transition_distributed(
         source,
         topology_state,
@@ -339,6 +343,22 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
     assert migrated_successor.execution_id == (
         successor_repartition.execution.execution_id
     )
+    successor_migration = successor_distribution.hierarchy.migration_to(
+        successor_repartition.hierarchy
+    )
+    assert sum(successor_migration.moved_block_counts) > 0
+    assert float(migrated_successor.scale_factor) == float(result.state.scale_factor)
+
+    # Topology/partition ownership changes start a new persistence chain. The
+    # accepted scientific transition retains its source and migration evidence.
+    with pytest.raises(ValueError, match="wrong execution ownership"):
+        successor_repartition.execution.publish_checkpoint(
+            repository,
+            "distributed-wave-amr-invalid-parent",
+            migrated_successor,
+            writer_id="wave-amr-invalid-parent-writer",
+            parent_manifest=manifest,
+        )
 
     successor_publication, successor_checkpoint = (
         successor_repartition.execution.publish_checkpoint(
@@ -346,7 +366,6 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
             "distributed-wave-amr-successor-checkpoint",
             migrated_successor,
             writer_id="wave-amr-successor-writer",
-            parent_manifest=manifest,
         )
     )
     successor_manifest = assemble_distributed_checkpoint_from_repository(
@@ -356,21 +375,27 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         successor.physics.plan_id,
         successor_repartition.execution.execution_id,
         expected_process_count=jax.process_count(),
-        parent_manifest=manifest,
         diagnostic_ids=(
             successor_checkpoint.evidence_id,
             transitioned.evidence.transition_id,
+            successor_migration.migration_id,
+            manifest.manifest_id,
         ),
     )
     assert successor_publication.shards and successor_manifest.complete
-    assert successor_manifest.parent_checkpoint_id == manifest.checkpoint_id
-    assert successor_manifest.parent_manifest_id == manifest.manifest_id
+    assert successor_manifest.parent_checkpoint_id is None
+    assert successor_manifest.parent_manifest_id is None
+    assert successor_manifest.diagnostic_ids == (
+        successor_checkpoint.evidence_id,
+        transitioned.evidence.transition_id,
+        successor_migration.migration_id,
+        manifest.manifest_id,
+    )
     restored_successor, successor_restart = (
         successor_distribution.execution.restore_checkpoint(
             repository,
             successor_manifest,
             successor_repartition.execution,
-            parent_manifest=manifest,
         )
     )
     assert successor_restart.changed_partition
@@ -379,6 +404,41 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         restored_successor.psi,
         transitioned.state.psi,
         strict=True,
+    ):
+        np.testing.assert_array_equal(actual, expected_level)
+
+    # Continuations within the destination owner retain strict parent lineage.
+    _, continuation_checkpoint = successor_repartition.execution.publish_checkpoint(
+        repository,
+        "distributed-wave-amr-successor-continuation",
+        migrated_successor,
+        writer_id="wave-amr-continuation-writer",
+        parent_manifest=successor_manifest,
+    )
+    continuation_manifest = assemble_distributed_checkpoint_from_repository(
+        repository,
+        continuation_checkpoint.checkpoint_id,
+        successor.prepared_id,
+        successor.physics.plan_id,
+        successor_repartition.execution.execution_id,
+        expected_process_count=jax.process_count(),
+        parent_manifest=successor_manifest,
+        diagnostic_ids=(continuation_checkpoint.evidence_id,),
+    )
+    assert continuation_manifest.parent_checkpoint_id == successor_manifest.checkpoint_id
+    assert continuation_manifest.parent_manifest_id == successor_manifest.manifest_id
+    restored_continuation, continuation_restart = (
+        successor_distribution.execution.restore_checkpoint(
+            repository,
+            continuation_manifest,
+            successor_repartition.execution,
+            parent_manifest=successor_manifest,
+        )
+    )
+    assert continuation_restart.changed_partition
+    assert continuation_restart.exact_coverage
+    for actual, expected_level in zip(
+        restored_continuation.psi, transitioned.state.psi, strict=True
     ):
         np.testing.assert_array_equal(actual, expected_level)
 

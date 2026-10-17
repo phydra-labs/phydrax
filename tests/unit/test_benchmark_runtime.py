@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import gc
 import importlib.metadata
 import math
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -141,6 +143,25 @@ def test_measure_repeated_synchronizes_warmups_and_retains_every_sample() -> Non
         measure_repeated(operation, warmup=0, repeats=0)
     with pytest.raises(ValueError, match="warmup must be nonnegative"):
         measure_repeated(operation, warmup=-1, repeats=1)
+
+
+def test_repeated_measurement_releases_completed_arrays_without_collection() -> None:
+    references: list[weakref.ReferenceType[np.ndarray]] = []
+
+    def operation() -> np.ndarray:
+        value = np.zeros((16,), dtype=np.float64)
+        references.append(weakref.ref(value))
+        return value
+
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        result, _ = measure_repeated(operation, warmup=1, repeats=64)
+        assert sum(reference() is not None for reference in references) == 1
+        assert references[-1]() is result
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 def test_host_and_synchronized_measurement_have_distinct_boundaries() -> None:

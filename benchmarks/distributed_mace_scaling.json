@@ -1,6 +1,6 @@
 {
   "configuration": {
-    "atoms_per_owner": 4,
+    "atoms_per_owner": 768,
     "cutoff": 3.0,
     "density": 0.08,
     "layers": 2,
@@ -9,62 +9,64 @@
       2
     ],
     "owners": "devices",
-    "repeats": 2,
+    "repeats": 5,
     "skin": 0.4,
-    "total_atoms": 8
+    "total_atoms": 2048
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "c3da64771d340476710698d4ff1478898af3856f09dec048bb0b034731ea2552",
+    "fingerprint": "b1596d232f5120c8fafde8df9fbcec7e5d56948c0b963d470e15693cc1bfaf77",
     "jax": {
-      "backend": "cpu",
+      "backend": "gpu",
       "devices": [
         {
-          "kind": "cpu",
-          "platform": "cpu"
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "platform": "gpu"
         },
         {
-          "kind": "cpu",
-          "platform": "cpu"
+          "kind": "NVIDIA A100-SXM4-80GB",
+          "platform": "gpu"
         }
       ],
       "version": "0.11.2",
       "x64_enabled": true
     },
     "jaxlib_version": "0.11.2",
-    "logical_cpus": 10,
-    "machine": "arm64",
-    "numpy_version": "2.5.3",
-    "package_fingerprint": "e904db69052e74586ff3c14c2d8370715a338a4c57ed3e2cf3f96bc7f5be6a72",
+    "logical_cpus": 256,
+    "machine": "x86_64",
+    "numpy_version": "2.5.4",
+    "package_fingerprint": "f44b046983c9a33a5caf1ef74acb972b8c163b889d3335fdc203a42fedb03e36",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,
       "JAX_PLATFORM_NAME": null,
       "MKL_NUM_THREADS": null,
       "NPROC": null,
-      "OMP_NUM_THREADS": null,
-      "OPENBLAS_NUM_THREADS": null,
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
       "VECLIB_MAXIMUM_THREADS": null,
-      "XLA_FLAGS": "--xla_force_host_platform_device_count=2",
-      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
-      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.75",
+      "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
     },
     "phydrax_version": "0.2.2",
-    "platform": "macOS-15.7.2-arm64-arm-64bit",
-    "processor": "arm",
-    "python_version": "3.12.8"
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python_version": "3.12.3"
   },
-  "evidence_scope": "functional owner-local execution on forced CPU devices or lanes; not accelerator, multi-host, or scaling-efficiency evidence",
+  "evidence_scope": [
+    "physical accelerator owner-device execution; no scaling-efficiency or multi-host qualification claim"
+  ],
   "host_load": {
     "load_average_1_5_15": [
-      6.41357421875,
-      7.71435546875,
-      15.5546875
+      11.31640625,
+      8.86865234375,
+      8.78564453125
     ],
-    "logical_cpus": 10
+    "logical_cpus": 256
   },
   "identity": {
-    "benchmark_driver_fingerprint": "12219a604ac576cbb120b5cd31a8ee173b500d2999f30944ebde086a90672788",
+    "benchmark_driver_fingerprint": "f8fecd776f6a6c7d5b1f411ab96e726db6c7639d3681c325e166d7ef7056bbb7",
     "evidence_schema": {
       "fields": [
         "configuration",
@@ -76,195 +78,2781 @@
       ],
       "signature": "3c1d77a5dcd2c97b25f5c8e3ac7f151adc86a580c3d50d1a03c1bb3b44ddcc76"
     },
-    "fingerprint": "d1fe84da2a4647489086b243717a4a87c781ebfaf314e93c1d3b0fdd9ffc1491",
-    "source_build_fingerprint": "43e0546f845668ab2e891972eed0b8409985dae5c567ece37f7d6690d51870b2"
+    "fingerprint": "f98545c78b8679389572e9067596f31288cf6f7dc4ab7176361f4f1092647b21",
+    "source_build_fingerprint": "7e3c59677b713ac86597abb158ce9fd6bf3619f77bb6a17649bfa362c9e1f94a"
   },
   "passed": true,
   "rows": [
     {
-      "active_edges": 84,
-      "atoms": 8,
-      "atoms_per_owner": 8.0,
+      "acceleration": null,
+      "active_edges": 27024,
+      "atoms": 2048,
+      "atoms_per_owner": 2048.0,
       "campaign": "fixed-total",
-      "compilation_seconds": 1.913768042,
+      "compilation_seconds": 18.262761359,
       "compiler": {
-        "argument_bytes": 223668,
-        "bytes_accessed": 322307104,
-        "flops": 64811288,
-        "generated_code_bytes": 0,
-        "output_bytes": 831,
+        "argument_bytes": 14657942,
+        "bytes_accessed": 883635264,
+        "flops": 138998400,
+        "generated_code_bytes": 12478,
+        "output_bytes": 105279,
         "source": "xla",
-        "temporary_bytes": 24804568,
+        "temporary_bytes": 91037448,
         "unavailable_reason": null
       },
+      "evidence_scope": "physical accelerator owner-device execution; no scaling-efficiency or multi-host qualification claim",
       "execution": "devices",
-      "first_execution_seconds": 0.0459735,
-      "first_interaction_halo_message_bytes": 2244,
+      "first_execution_seconds": 0.857691195,
+      "first_interaction_halo_message_bytes": 433092,
       "halo_columns": 0,
+      "hardware_process_evidence": {
+        "execution_group_id": "0b3bcf8d495e97c7ba1b7701587ade4fa6bc494d535201b9a08130bd25ccc7ac",
+        "global_device_count": 2,
+        "local_device_count": 2,
+        "owner_lanes": null,
+        "owner_processes": [
+          0
+        ],
+        "process_count": 1,
+        "process_index": 0,
+        "selected_device_count": 1,
+        "selected_devices": [
+          {
+            "device_kind": "NVIDIA A100-SXM4-80GB",
+            "id": 0,
+            "platform": "gpu",
+            "process_index": 0
+          }
+        ]
+      },
       "layers": 2,
-      "logical_state_bytes": 250950,
-      "lowering_seconds": 1.905069,
-      "maximum_alias_load": 100,
-      "maximum_degree": 12,
-      "maximum_edge_count": 84,
+      "logical_state_bytes": 41038625,
+      "lowering_seconds": 4.159129696,
+      "maximum_alias_load": 1751,
+      "maximum_degree": 26,
+      "maximum_edge_count": 27024,
       "maximum_halo_load": 0,
+      "memory": {
+        "after_compilation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 129641472
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 624816384
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 160128012
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220486754273503
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220486754340861
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2013082730496
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 4129320960
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 4129320960
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220486746391622
+          }
+        },
+        "after_preparation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 129641472
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 624816384
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 160128012
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220464209403634
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220464209530915
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2014911377408
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 3290828800
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 3290828800
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220464203264181
+          }
+        },
+        "after_rebuild": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 171500800
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 201797235
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220518964580355
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220518964710461
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2013017960448
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 4355452928
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 4355452928
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220518953176366
+          }
+        },
+        "after_warm_execution": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 129940736
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 624816384
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 160338346
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220492054300978
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220492054362485
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2013699215360
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 4134518784
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 4134518784
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220492050416264
+          }
+        },
+        "baseline": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 2560
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 2816
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 2097152
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 73
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220334850024321
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220334850100725
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2017072275456
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 1530208256
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 1530208256
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220334848991385
+          }
+        },
+        "scope": "process-local samples; allocator peaks are since process start"
+      },
       "migrated_atoms": 0,
       "owners": 1,
-      "post_migration_execution_seconds": 4.003315084,
-      "prepare_seconds": 3.147484416,
-      "rebuild_seconds": 0.885591167,
+      "post_migration_execution_seconds": 19.787349753,
+      "prepare_seconds": 18.637237483,
+      "rebuild_seconds": 6.571327713,
       "successful": true,
       "warm": {
-        "count": 2,
-        "max_seconds": 0.011170292,
-        "mean_seconds": 0.010862396,
-        "median_seconds": 0.010862396,
-        "min_seconds": 0.0105545,
+        "count": 5,
+        "max_seconds": 0.741932339,
+        "mean_seconds": 0.739760532,
+        "median_seconds": 0.739855057,
+        "min_seconds": 0.738079606,
         "samples_seconds": [
-          0.0105545,
-          0.011170292
+          0.738079606,
+          0.739855057,
+          0.740211823,
+          0.741932339,
+          0.738723835
         ],
-        "std_seconds": 0.0003078960000000002
+        "std_seconds": 0.0013288790068956518
       }
     },
     {
-      "active_edges": 92,
-      "atoms": 8,
-      "atoms_per_owner": 4.0,
+      "acceleration": null,
+      "active_edges": 27024,
+      "atoms": 2048,
+      "atoms_per_owner": 1024.0,
       "campaign": "fixed-total",
-      "compilation_seconds": 2.627622208,
+      "compilation_seconds": 16.250292307,
       "compiler": {
-        "argument_bytes": 200231,
-        "bytes_accessed": 289120640,
-        "flops": 62799984,
-        "generated_code_bytes": 0,
-        "output_bytes": 639,
+        "argument_bytes": 7420717,
+        "bytes_accessed": 597326144,
+        "flops": 106963072,
+        "generated_code_bytes": 12990,
+        "output_bytes": 52863,
         "source": "xla",
-        "temporary_bytes": 24343192,
+        "temporary_bytes": 56107784,
         "unavailable_reason": null
       },
+      "evidence_scope": "physical accelerator owner-device execution; no scaling-efficiency or multi-host qualification claim",
       "execution": "devices",
-      "first_execution_seconds": 0.075556583,
-      "first_interaction_halo_message_bytes": 2904,
-      "halo_columns": 8,
+      "first_execution_seconds": 0.738094754,
+      "first_interaction_halo_message_bytes": 433752,
+      "halo_columns": 688,
+      "hardware_process_evidence": {
+        "execution_group_id": "d8d9ab975791205938277cac2d887aa874137732f70cbfe3c60cd0e4d50ba9f0",
+        "global_device_count": 2,
+        "local_device_count": 2,
+        "owner_lanes": null,
+        "owner_processes": [
+          0,
+          0
+        ],
+        "process_count": 1,
+        "process_index": 0,
+        "selected_device_count": 2,
+        "selected_devices": [
+          {
+            "device_kind": "NVIDIA A100-SXM4-80GB",
+            "id": 0,
+            "platform": "gpu",
+            "process_index": 0
+          },
+          {
+            "device_kind": "NVIDIA A100-SXM4-80GB",
+            "id": 1,
+            "platform": "gpu",
+            "process_index": 0
+          }
+        ]
+      },
       "layers": 2,
-      "logical_state_bytes": 371183,
-      "lowering_seconds": 1.489540875,
-      "maximum_alias_load": 60,
-      "maximum_degree": 16,
-      "maximum_edge_count": 71,
-      "maximum_halo_load": 6,
-      "migrated_atoms": 1,
+      "logical_state_bytes": 41146551,
+      "lowering_seconds": 4.438695959,
+      "maximum_alias_load": 785,
+      "maximum_degree": 26,
+      "maximum_edge_count": 14585,
+      "maximum_halo_load": 355,
+      "memory": {
+        "after_compilation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 154583040
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 219787964
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220556858001474
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 21149952
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 306048000
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 41146546
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220556858067428
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012493127680
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 4983726080
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 4983726080
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220556845421158
+          }
+        },
+        "after_preparation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 154584064
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 199214979
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220536028449684
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 21149952
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 306048000
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 20573273
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220536028585691
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2013229248512
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 4840235008
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 4840235008
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220536016262933
+          }
+        },
+        "after_rebuild": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 175623168
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 240782874
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220589781243390
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 42146304
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 62141413
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220589781342708
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012805894144
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5230354432
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5230354432
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220589770802915
+          }
+        },
+        "after_warm_execution": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 154739968
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 219893466
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220559795807382
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 21291520
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 306048000
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 41252048
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220559795945223
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012765712384
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5031399424
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5031399424
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220559787183646
+          }
+        },
+        "baseline": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 87949312
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 118802049
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220519106624422
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220519106683403
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2013036105728
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 4355325952
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 4355325952
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220519101213298
+          }
+        },
+        "scope": "process-local samples; allocator peaks are since process start"
+      },
+      "migrated_atoms": 25,
       "owners": 2,
-      "post_migration_execution_seconds": 4.834956584,
-      "prepare_seconds": 2.68106825,
-      "rebuild_seconds": 1.058231,
+      "post_migration_execution_seconds": 21.779858708,
+      "prepare_seconds": 14.565798454,
+      "rebuild_seconds": 7.290981727,
       "successful": true,
       "warm": {
-        "count": 2,
-        "max_seconds": 0.01277,
-        "mean_seconds": 0.0127529375,
-        "median_seconds": 0.0127529375,
-        "min_seconds": 0.012735875,
+        "count": 5,
+        "max_seconds": 0.368950369,
+        "mean_seconds": 0.3656742706,
+        "median_seconds": 0.363963989,
+        "min_seconds": 0.363625478,
         "samples_seconds": [
-          0.01277,
-          0.012735875
+          0.363963989,
+          0.363834674,
+          0.363625478,
+          0.367996843,
+          0.368950369
         ],
-        "std_seconds": 1.7062499999999717e-05
+        "std_seconds": 0.002307981507706213
       }
     },
     {
-      "active_edges": 34,
-      "atoms": 4,
-      "atoms_per_owner": 4.0,
+      "acceleration": null,
+      "active_edges": 10236,
+      "atoms": 768,
+      "atoms_per_owner": 768.0,
       "campaign": "fixed-per-owner",
-      "compilation_seconds": 1.888800041,
+      "compilation_seconds": 14.445270768,
       "compiler": {
-        "argument_bytes": 200176,
-        "bytes_accessed": 288867680,
-        "flops": 62795264,
-        "generated_code_bytes": 0,
-        "output_bytes": 639,
+        "argument_bytes": 5594902,
+        "bytes_accessed": 476833600,
+        "flops": 96189120,
+        "generated_code_bytes": 12478,
+        "output_bytes": 39743,
         "source": "xla",
-        "temporary_bytes": 24323416,
+        "temporary_bytes": 42776840,
         "unavailable_reason": null
       },
+      "evidence_scope": "physical accelerator owner-device execution; no scaling-efficiency or multi-host qualification claim",
       "execution": "devices",
-      "first_execution_seconds": 0.045715,
-      "first_interaction_halo_message_bytes": 1452,
+      "first_execution_seconds": 0.388618252,
+      "first_interaction_halo_message_bytes": 162756,
       "halo_columns": 0,
+      "hardware_process_evidence": {
+        "execution_group_id": "0b3bcf8d495e97c7ba1b7701587ade4fa6bc494d535201b9a08130bd25ccc7ac",
+        "global_device_count": 2,
+        "local_device_count": 2,
+        "owner_lanes": null,
+        "owner_processes": [
+          0
+        ],
+        "process_count": 1,
+        "process_index": 0,
+        "selected_device_count": 1,
+        "selected_devices": [
+          {
+            "device_kind": "NVIDIA A100-SXM4-80GB",
+            "id": 0,
+            "platform": "gpu",
+            "process_index": 0
+          }
+        ]
+      },
       "layers": 2,
-      "logical_state_bytes": 185567,
-      "lowering_seconds": 2.018211958,
-      "maximum_alias_load": 71,
-      "maximum_degree": 9,
-      "maximum_edge_count": 34,
+      "logical_state_bytes": 15428001,
+      "lowering_seconds": 4.169346276,
+      "maximum_alias_load": 1035,
+      "maximum_degree": 25,
+      "maximum_edge_count": 10236,
       "maximum_halo_load": 0,
+      "memory": {
+        "after_compilation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 183376640
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 238736170
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220626656459771
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220626656529323
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012144168960
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5496078336
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5496078336
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220626644330239
+          }
+        },
+        "after_preparation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 183378176
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 238736602
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220607896857972
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220607897005371
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012688195584
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5353504768
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5353504768
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220607888864910
+          }
+        },
+        "after_rebuild": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 199133440
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 254401553
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220653211134705
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220653211261035
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012163026944
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5662822400
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5662822400
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220653194803568
+          }
+        },
+        "after_warm_execution": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 183472128
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 238815432
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220628605280910
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220628605339260
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012320235520
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5499785216
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5499785216
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220628601321905
+          }
+        },
+        "baseline": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 133086720
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 178354047
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220589921539738
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220589921607847
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012775350272
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5230141440
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5230141440
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220589913580651
+          }
+        },
+        "scope": "process-local samples; allocator peaks are since process start"
+      },
       "migrated_atoms": 0,
       "owners": 1,
-      "post_migration_execution_seconds": 3.331192833,
-      "prepare_seconds": 2.285623125,
-      "rebuild_seconds": 0.757449084,
+      "post_migration_execution_seconds": 18.587005042,
+      "prepare_seconds": 15.166620062,
+      "rebuild_seconds": 5.446441276,
       "successful": true,
       "warm": {
-        "count": 2,
-        "max_seconds": 0.009798958,
-        "mean_seconds": 0.009596729,
-        "median_seconds": 0.009596729,
-        "min_seconds": 0.0093945,
+        "count": 5,
+        "max_seconds": 0.259931633,
+        "mean_seconds": 0.2591981724,
+        "median_seconds": 0.259060834,
+        "min_seconds": 0.258542273,
         "samples_seconds": [
-          0.0093945,
-          0.009798958
+          0.258922332,
+          0.259060834,
+          0.259931633,
+          0.258542273,
+          0.25953379
         ],
-        "std_seconds": 0.00020222899999999995
+        "std_seconds": 0.00048492420242532874
       }
     },
     {
-      "active_edges": 92,
-      "atoms": 8,
-      "atoms_per_owner": 4.0,
+      "acceleration": null,
+      "active_edges": 20244,
+      "atoms": 1536,
+      "atoms_per_owner": 768.0,
       "campaign": "fixed-per-owner",
-      "compilation_seconds": 2.701854625,
+      "compilation_seconds": 16.085143609,
       "compiler": {
-        "argument_bytes": 200231,
-        "bytes_accessed": 289120640,
-        "flops": 62799984,
-        "generated_code_bytes": 0,
-        "output_bytes": 639,
+        "argument_bytes": 5601067,
+        "bytes_accessed": 504540544,
+        "flops": 98166704,
+        "generated_code_bytes": 12990,
+        "output_bytes": 39743,
         "source": "xla",
-        "temporary_bytes": 24343192,
+        "temporary_bytes": 45489160,
         "unavailable_reason": null
       },
+      "evidence_scope": "physical accelerator owner-device execution; no scaling-efficiency or multi-host qualification claim",
       "execution": "devices",
-      "first_execution_seconds": 0.066674959,
-      "first_interaction_halo_message_bytes": 2904,
-      "halo_columns": 8,
+      "first_execution_seconds": 0.54781402,
+      "first_interaction_halo_message_bytes": 325512,
+      "halo_columns": 572,
+      "hardware_process_evidence": {
+        "execution_group_id": "d8d9ab975791205938277cac2d887aa874137732f70cbfe3c60cd0e4d50ba9f0",
+        "global_device_count": 2,
+        "local_device_count": 2,
+        "owner_lanes": null,
+        "owner_processes": [
+          0,
+          0
+        ],
+        "process_count": 1,
+        "process_index": 0,
+        "selected_device_count": 2,
+        "selected_devices": [
+          {
+            "device_kind": "NVIDIA A100-SXM4-80GB",
+            "id": 0,
+            "platform": "gpu",
+            "process_index": 0
+          },
+          {
+            "device_kind": "NVIDIA A100-SXM4-80GB",
+            "id": 1,
+            "platform": "gpu",
+            "process_index": 0
+          }
+        ]
+      },
       "layers": 2,
-      "logical_state_bytes": 371183,
-      "lowering_seconds": 0.265240208,
-      "maximum_alias_load": 60,
-      "maximum_degree": 16,
-      "maximum_edge_count": 71,
-      "maximum_halo_load": 6,
-      "migrated_atoms": 1,
+      "logical_state_bytes": 30868271,
+      "lowering_seconds": 3.296277971,
+      "maximum_alias_load": 662,
+      "maximum_degree": 30,
+      "maximum_edge_count": 10339,
+      "maximum_halo_load": 292,
+      "memory": {
+        "after_compilation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 209552384
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 292776846
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220690086571132
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 16335104
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 30868266
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220690086639922
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2011657048064
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5888335872
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5888335872
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220690069951118
+          }
+        },
+        "after_preparation": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 209552384
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 277342713
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220670548151475
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 16335104
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 15434133
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220670548298714
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012096425984
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5789884416
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5789884416
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220670531982425
+          }
+        },
+        "after_rebuild": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 225309696
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 308527656
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220720159765367
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 32119296
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 46619033
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220720159836752
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2011720171520
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 6095450112
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 6095450112
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220720141526418
+          }
+        },
+        "after_warm_execution": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 209648384
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 292856108
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220692296092859
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 16442880
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 30947528
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220692296224108
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2011921805312
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5913722880
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5913722880
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220692285765608
+          }
+        },
+        "baseline": {
+          "devices": [
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 166213888
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 755398400
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1210056704
+              },
+              "device_id": 0,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 223022111
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220653407262239
+            },
+            {
+              "allocator_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "allocator_limit": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 63820529664
+              },
+              "allocator_peak_in_use": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 327755520
+              },
+              "allocator_reserved": {
+                "method": "jax_memory_stats",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 543162368
+              },
+              "device_id": 1,
+              "live_array_bytes": {
+                "method": "jax_live_arrays",
+                "resolution_bytes": 1,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 0
+              },
+              "platform": "gpu",
+              "process_index": 0,
+              "provider_id": "gpu",
+              "provider_version": "cuda 13040",
+              "timestamp_ns": 1792220653407322784
+            }
+          ],
+          "host": {
+            "host_available": {
+              "method": "procfs_meminfo_available",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2012174192640
+            },
+            "host_total": {
+              "method": "sysconf_physical_pages",
+              "resolution_bytes": 4096,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 2164247793664
+            },
+            "process_index": 0,
+            "process_peak_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "peak",
+              "unavailable_reason": null,
+              "value_bytes": 5662695424
+            },
+            "process_resident": {
+              "method": "procfs_status",
+              "resolution_bytes": 1024,
+              "scope": "baseline",
+              "unavailable_reason": null,
+              "value_bytes": 5662695424
+            },
+            "provider": "linux_procfs",
+            "timestamp_ns": 1792220653399217128
+          }
+        },
+        "scope": "process-local samples; allocator peaks are since process start"
+      },
+      "migrated_atoms": 20,
       "owners": 2,
-      "post_migration_execution_seconds": 0.064875084,
-      "prepare_seconds": 0.057569583,
-      "rebuild_seconds": 0.046882041,
+      "post_migration_execution_seconds": 21.150940328,
+      "prepare_seconds": 14.305936391,
+      "rebuild_seconds": 5.904037761,
       "successful": true,
       "warm": {
-        "count": 2,
-        "max_seconds": 0.013144333,
-        "mean_seconds": 0.013051354,
-        "median_seconds": 0.013051354,
-        "min_seconds": 0.012958375,
+        "count": 5,
+        "max_seconds": 0.277319721,
+        "mean_seconds": 0.27567478219999997,
+        "median_seconds": 0.275382963,
+        "min_seconds": 0.274197509,
         "samples_seconds": [
-          0.012958375,
-          0.013144333
+          0.275382963,
+          0.277319721,
+          0.276582074,
+          0.274197509,
+          0.274891644
         ],
-        "std_seconds": 9.297899999999998e-05
+        "std_seconds": 0.0011322369062452338
       }
     }
   ],
-  "workload_id": "94f7e33cb0adb02ddd699f1441604e6eff5ec476f0207fba80f7198124345b83"
+  "workload_id": "45700e107f80b06fe065f20387675e7567703406c6c52270f35f8faf62e92b32"
 }

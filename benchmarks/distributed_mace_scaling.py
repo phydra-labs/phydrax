@@ -15,11 +15,14 @@ transaction. Actual alias loads, edge counts, halo loads, deduplicated halo
 columns, per-interaction halo message bytes, and migration counts are
 retained; no scaling efficiency is inferred.
 
-Owners execute either on forced/real devices (``--owners devices``; run with
-native configuration with ``RuntimeConfig(cpu_device_count=N)``) or as lane-reference
-vmap lanes on one device (``--owners lanes``). Forced CPU devices and lanes are
-functional evidence only, never accelerator or multi-host performance.
-Compiler bytes are official XLA estimates of the transformed executable.
+Owners execute on selected real/forced devices (``--owners devices``) or as
+lane-reference vmap lanes on one device (``--owners lanes``). Each row records
+the selected devices independently of owner count. CPU devices and lanes are
+functional evidence only, never accelerator scaling evidence. The model uses
+native JAX coupling (``acceleration=None``). Compiler bytes are XLA estimates;
+allocator counters and retained-array bytes are sampled separately per device.
+The host-ingress campaign supports one process only and explicitly refuses
+multi-process runs. Fixed-total rows use the same crystal across owner counts.
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ from benchmarks._runtime import (
     measure_synchronized,
 )
 from phydrax._execution_runtime import ExecutionRuntime
+from phydrax._execution_sampling import sample_device_memory, sample_host_memory
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.atomistic import AtomisticScaleContract
 from phydrax.atomistic._distributed import (
@@ -88,7 +92,7 @@ def _model(layers: int) -> MACEPotential:
         interactions=("real-agnostic",) + ("real-agnostic-residual",) * (layers - 1),
         correlations=(3,) * layers,
         radial_widths=(32, 32),
-        readout_width=16,
+        readout_width=16 if layers > 1 else None,
         average_neighbor_count=12.0,
     )
     return MACEPotential(
@@ -96,6 +100,7 @@ def _model(layers: int) -> MACEPotential:
         architecture,
         atomic_energies=np.array([-0.3, -1.1]),
         key=jax.random.key(0),
+        acceleration=None,
     )
 
 
@@ -181,8 +186,21 @@ def _row(
     execution: OwnerExecution,
     repeats: int,
 ) -> dict[str, Any]:
+    if min(owners, atoms, layers, repeats) < 1:
+        raise ValueError("owners, atoms, layers, and repeats must be positive.")
+    if jax.process_count() != 1:
+        raise ValueError(
+            "This MACE scaling driver supports single-process owner devices or lanes; "
+            "multi-process owner-local ingress is not qualified by this driver."
+        )
+    baseline_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
     model = _model(layers)
-    cell, positions, species_ids = _structure(atoms, seed=atoms + owners)
+    cell, positions, species_ids = _structure(atoms, seed=atoms)
     local = int(np.ceil(1.6 * atoms / owners)) + 4
     plan = _plan(model, cell, owners, local, execution)
     mask = jax.numpy.ones(species_ids.shape, dtype=np.bool_)
@@ -198,6 +216,12 @@ def _row(
             velocities=velocities,
         )
     )
+    prepared_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
     evidence = state.topology.evidence
     jitted = jax.jit(
         lambda potential, current: evaluate_owner_local_atomistic(
@@ -210,12 +234,24 @@ def _row(
     compiler = compiler_evidence(
         compiled.cost_analysis(), compiled.memory_analysis(), source="xla"
     )
+    compiled_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
     first, first_seconds = measure_synchronized(lambda: compiled(model, state))
     _, warm = measure_repeated(
         lambda: compiled(model, state),
         warmup=1,
         repeats=repeats,
     )
+    runtime_memory = {
+        "host": sample_host_memory().to_payload(),
+        "devices": [
+            sample.to_payload() for sample in sample_device_memory(jax.local_devices())
+        ],
+    }
     displacement = 0.05 * velocities
     if owners > 1:
         # Host campaign preparation forces one actual ownership crossing;
@@ -237,6 +273,17 @@ def _row(
         lambda: evaluate_owner_local_atomistic(plan, model, transition.state)
     )
     crossed = owners == 1 or int(transition.migration.migrated) > 0
+    selected = plan.ownership.execution_group.devices
+    platforms = sorted({device.platform for device in selected})
+    scope = (
+        "functional lane-reference execution on one device"
+        if plan.ownership.lane_reference
+        else (
+            "functional CPU owner-device execution"
+            if platforms == ["cpu"]
+            else "physical accelerator owner-device execution"
+        )
+    )
     return {
         "campaign": campaign,
         "owners": owners,
@@ -244,6 +291,28 @@ def _row(
         "atoms_per_owner": atoms / owners,
         "layers": layers,
         "execution": execution,
+        "acceleration": None,
+        "evidence_scope": scope
+        + "; no scaling-efficiency or multi-host qualification claim",
+        "hardware_process_evidence": {
+            "process_index": jax.process_index(),
+            "process_count": jax.process_count(),
+            "global_device_count": jax.device_count(),
+            "local_device_count": jax.local_device_count(),
+            "owner_lanes": owners if plan.ownership.lane_reference else None,
+            "selected_device_count": len(selected),
+            "selected_devices": [
+                {
+                    "id": int(device.id),
+                    "process_index": int(device.process_index),
+                    "platform": device.platform,
+                    "device_kind": device.device_kind,
+                }
+                for device in selected
+            ],
+            "execution_group_id": plan.ownership.execution_group.spec.group_id,
+            "owner_processes": list(plan.ownership.owner_processes),
+        },
         "successful": (
             bool(first.successful)
             and bool(transition.committed)
@@ -262,18 +331,32 @@ def _row(
         "maximum_degree": int(evidence.maximum_degree),
         "maximum_halo_load": int(evidence.maximum_halo_load),
         "halo_columns": int(state.topology.halo.evidence.halo_columns),
-        "active_edges": int(np.sum(np.asarray(state.topology.edge_valid))),
+        "active_edges": int(jax.numpy.sum(state.topology.edge_valid)),
         "first_interaction_halo_message_bytes": _first_message_bytes(plan, model, state),
         "migrated_atoms": int(transition.migration.migrated),
         "logical_state_bytes": logical_array_bytes(state),
         "compiler": asdict(compiler),
+        "memory": {
+            "baseline": baseline_memory,
+            "after_preparation": prepared_memory,
+            "after_compilation": compiled_memory,
+            "after_warm_execution": runtime_memory,
+            "after_rebuild": {
+                "host": sample_host_memory().to_payload(),
+                "devices": [
+                    sample.to_payload()
+                    for sample in sample_device_memory(jax.local_devices())
+                ],
+            },
+            "scope": "process-local samples; allocator peaks are since process start",
+        },
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owners", default="lanes")
-    parser.add_argument("--owner-counts", type=int, nargs="+", default=(1, 2, 4))
+    parser.add_argument("--owner-counts", type=int, nargs="+", default=(1, 2))
     parser.add_argument("--total-atoms", type=int, default=96)
     parser.add_argument("--atoms-per-owner", type=int, default=48)
     parser.add_argument("--layers", type=int, default=2)
@@ -323,10 +406,7 @@ def main() -> None:
             "load_average_1_5_15": list(os.getloadavg()),
             "logical_cpus": os.cpu_count(),
         },
-        "evidence_scope": (
-            "functional owner-local execution on forced CPU devices or lanes; "
-            "not accelerator, multi-host, or scaling-efficiency evidence"
-        ),
+        "evidence_scope": sorted({row["evidence_scope"] for row in rows}),
     }
     identity = capture_benchmark_identity(PROJECT_ROOT, Path(__file__), tuple(record))
     record["identity"] = identity.to_dict()

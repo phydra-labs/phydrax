@@ -534,6 +534,13 @@ refusal are identical to full-width traversal. Each rung compiles its own
 branch, so the ladder trades compilation time for less traversal work and
 temporary storage when the live frontier is much smaller than the queue
 capacity; full-width traversal remains the default.
+The three capacities, expanded-frontier and seed sizes, and conservative cumulative
+traversal counts must fit in signed int32, including the out-of-bounds sentinel;
+larger declarations are refused before route allocation. Particle
+FMM defaults reserve the square of the leaf capacity for each interaction
+buffer. Large campaigns should set explicit queue, far, and near capacities
+within their memory envelope and inspect overflow evidence; streamed evaluation
+does not make those topology buffers linear in the particle count.
 `recheck` re-evaluates the opening criterion for every retained far pair under
 current geometry with the same acceptance calculation used by `build`. Node
 expansion radii are finite powers of two that enclose their tight point bounds;

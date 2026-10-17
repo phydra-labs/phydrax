@@ -46,14 +46,14 @@ MACECouplingRole: TypeAlias = Literal[
 
 WARPGROUP_LANES = 128
 _BACKEND = "pallas-atomistic"
-# Retain the existing Hopper admission and admit consumer Blackwell
-# after Lane-kernel forward and derivative execution on an RTX 5090. This
-# family uses no WGMMA, TCGEN05, or TMA multicast instructions. Other
+# Retain Hopper admission; Ampere A100 and consumer Blackwell RTX 5090 have
+# compiled Lane-kernel forward and derivative evidence with JAX/JAXlib 0.11.2.
+# This family uses no WGMMA, TCGEN05, or TMA multicast instructions. Other
 # architectures need their own compile evidence, not a numeric lower bound.
-_CUDA_ADMITTED_COMPUTE_CAPABILITIES = frozenset(((9, 0), (12, 0)))
+_CUDA_ADMITTED_COMPUTE_CAPABILITIES = frozenset(((8, 0), (9, 0), (12, 0)))
 _REQUIREMENT = (
     "JAX Pallas Mosaic GPU on an NVIDIA CUDA device with admitted compute "
-    "capability 9.0 or 12.0, "
+    "capability 8.0, 9.0, or 12.0, "
     "or the explicit CPU Mosaic GPU interpreter for reference verification"
 )
 

@@ -475,3 +475,52 @@ def test_ladder_preserves_asymmetric_support_routes() -> None:
         near_capacity=64,
     )
     assert bool(plan.recheck(source, target, interactions=results[0]).successful)
+
+
+@pytest.mark.parametrize(
+    ("queue", "far", "near"),
+    (
+        (2**31, 64, 64),
+        (64, 2**31, 64),
+        (64, 64, 2**31),
+        (2**30, 64, 64),
+        (2**28, 64, 64),
+    ),
+    ids=("queue", "far", "near", "expanded-frontier", "cumulative-far"),
+)
+def test_interaction_capacity_refuses_int32_overflow_before_allocation(
+    queue: int, far: int, near: int
+) -> None:
+    schedule_plan = MortonPlaneSchedulePlan(
+        MortonAddressPlan((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 8),
+        8,
+        maximum_leaf_occupancy=2,
+        coarsening_factor=2,
+        target_top_nodes=1,
+    )
+    with pytest.raises(ValueError):
+        MortonPlaneInteractionPlan(
+            schedule_plan,
+            opening_angle=0.5,
+            queue_capacity=queue,
+            far_capacity=far,
+            near_capacity=near,
+        )
+
+
+def test_interaction_seed_product_refuses_int32_overflow_before_allocation() -> None:
+    schedule_plan = MortonPlaneSchedulePlan(
+        MortonAddressPlan((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 8),
+        50000,
+        maximum_leaf_occupancy=1,
+        coarsening_factor=2,
+        target_top_nodes=50000,
+    )
+    with pytest.raises(ValueError):
+        MortonPlaneInteractionPlan(
+            schedule_plan,
+            opening_angle=0.5,
+            queue_capacity=64,
+            far_capacity=64,
+            near_capacity=64,
+        )

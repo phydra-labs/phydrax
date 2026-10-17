@@ -281,36 +281,38 @@ class RuntimeEnvironment:
         }
 
 
+def _collect_array_leaves(
+    item: Any, arrays: list[jax.Array | np.ndarray], seen: set[int]
+) -> None:
+    """Avoid a recursive closure whose self-cycle retains device buffers."""
+    identifier = id(item)
+    if identifier in seen:
+        return
+    seen.add(identifier)
+    if isinstance(item, (jax.Array, np.ndarray)):
+        arrays.append(item)
+        return
+    if isinstance(item, Mapping):
+        for nested in item.values():
+            _collect_array_leaves(nested, arrays, seen)
+        return
+    if isinstance(item, (list, tuple)):
+        for nested in item:
+            _collect_array_leaves(nested, arrays, seen)
+        return
+    leaves = jax.tree.leaves(item)
+    if not (len(leaves) == 1 and leaves[0] is item):
+        for leaf in leaves:
+            _collect_array_leaves(leaf, arrays, seen)
+        return
+    if is_dataclass(item) and not isinstance(item, type):
+        for field in fields(item):
+            _collect_array_leaves(object.__getattribute__(item, field.name), arrays, seen)
+
+
 def _array_leaves(value: Any, /) -> tuple[jax.Array | np.ndarray, ...]:
     arrays: list[jax.Array | np.ndarray] = []
-    seen: set[int] = set()
-
-    def visit(item: Any) -> None:
-        identifier = id(item)
-        if identifier in seen:
-            return
-        seen.add(identifier)
-        if isinstance(item, (jax.Array, np.ndarray)):
-            arrays.append(item)
-            return
-        if isinstance(item, Mapping):
-            for nested in item.values():
-                visit(nested)
-            return
-        if isinstance(item, (list, tuple)):
-            for nested in item:
-                visit(nested)
-            return
-        leaves = jax.tree.leaves(item)
-        if not (len(leaves) == 1 and leaves[0] is item):
-            for leaf in leaves:
-                visit(leaf)
-            return
-        if is_dataclass(item) and not isinstance(item, type):
-            for field in fields(item):
-                visit(object.__getattribute__(item, field.name))
-
-    visit(value)
+    _collect_array_leaves(value, arrays, set())
     return tuple(arrays)
 
 
