@@ -10,6 +10,7 @@
       "float64"
     ],
     "profile_capture": false,
+    "ranks": 2,
     "repeats": 31,
     "route": "cuda-direct",
     "sizes": [

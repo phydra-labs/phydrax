@@ -16,7 +16,6 @@ from phydrax._cuda_environment import (
     assess_provider_dependencies,
     collect_cuda_environment,
     cuda_enabled,
-    jax_plugin_preloads,
     provider_dependency_closure,
 )
 from phydrax._elf_dependencies import (
@@ -112,6 +111,32 @@ def test_marker_must_match_unique_plugin() -> None:
     )
 
 
+@pytest.mark.parametrize("major", [11, 12, 14])
+@pytest.mark.parametrize("platforms", [None, ("cpu",), ("cuda",)])
+def test_unsupported_plugin_is_refused_even_without_install_marker(
+    major: int, platforms: tuple[str, ...] | None
+) -> None:
+    facts = replace(_facts(), plugin_majors=(major,), selected_platforms=platforms)
+    _only_issue(facts, "plugin-major-mismatch")
+    assert not cuda_enabled(facts)
+
+
+def test_cuda13_install_marker_and_plugin_are_accepted() -> None:
+    report = assess_cuda_environment(
+        replace(_facts(), requested_major=13, plugin_majors=(13,))
+    )
+    assert report.successful
+    assert report.issues == ()
+
+
+@pytest.mark.parametrize("major", [11, 12, 14])
+def test_unsupported_runtime_is_refused(major: int) -> None:
+    _only_issue(
+        replace(_facts(), plugin_majors=(13,), runtime_version=(major, 0)),
+        "unsupported-cuda-major",
+    )
+
+
 def test_foreign_distributions_include_exact_uninstall_command() -> None:
     issue = _only_issue(
         replace(
@@ -126,11 +151,10 @@ def test_foreign_distributions_include_exact_uninstall_command() -> None:
     assert "pip uninstall nvidia-cublas-cu12 nvidia-cuda-runtime-cu12" in issue.message
 
 
-def test_old_driver_recommends_matching_extra() -> None:
-    issue = _only_issue(
+def test_old_driver_is_refused() -> None:
+    _only_issue(
         replace(_facts(), plugin_majors=(13,), driver_version=(12, 8)), "driver-too-old"
     )
-    assert "phydrax[cuda12]" in issue.message
 
 
 def test_matching_driver_passes() -> None:
@@ -212,6 +236,17 @@ def test_mapped_mixed_majors_are_refused_unknowns_are_not_counted() -> None:
     assert issue.paths == (known.path, other.path)
 
 
+@pytest.mark.parametrize("major", [11, 12, 14])
+def test_single_foreign_mapped_toolkit_is_refused(major: int) -> None:
+    library = MappedCudaLibrary(
+        soname=f"libcudart.so.{major}", path=f"/toolkit/libcudart.so.{major}", major=major
+    )
+    issue = _only_issue(
+        replace(_facts(), mapped_libraries=(library,)), "unsupported-cuda-major"
+    )
+    assert issue.paths == (library.path,)
+
+
 def test_assessment_issue_order_is_deterministic() -> None:
     facts = replace(
         _facts(),
@@ -270,15 +305,12 @@ def test_math_library_sonames_have_toolkit_specific_majors(
     soname: str, major: int
 ) -> None:
     closure = _closure(resolved=(_dependency(soname, f"/unknown/{soname}"),))
-    assert (
-        assess_provider_dependencies(closure, replace(_facts(), plugin_majors=(major,)))
-        == ()
-    )
-    issues = assess_provider_dependencies(
-        closure, replace(_facts(), plugin_majors=(13 if major == 12 else 12,))
-    )
-    assert len(issues) == 1
-    assert issues[0].code == "provider-major-mismatch"
+    issues = assess_provider_dependencies(closure, replace(_facts(), plugin_majors=(13,)))
+    if major == 13:
+        assert issues == ()
+    else:
+        assert len(issues) == 1
+        assert issues[0].code == "provider-major-mismatch"
 
 
 @pytest.mark.parametrize(
@@ -459,13 +491,44 @@ def test_cuda13_unsuffixed_math_wheels_are_not_foreign() -> None:
             )
 
 
-def test_plugin_preloads_are_unique_existing_paths() -> None:
+@pytest.mark.parametrize("plugin_major", [None, 12, 13, 14])
+@pytest.mark.parametrize("wheel_major", [12, 13, 14])
+def test_collection_preserves_marker_and_attributes_foreign_wheels(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    plugin_major: int | None,
+    wheel_major: int,
+) -> None:
+    wheel_name = (
+        "nvidia-cusparse" if wheel_major == 13 else f"nvidia-cusparse-cu{wheel_major}"
+    )
+    names = [("phydrax-cuda-major", "13.0"), (wheel_name, "1.0")]
+    if plugin_major is not None:
+        names.append((f"jax-cuda{plugin_major}-plugin", "0.9.2"))
+    distributions: list[importlib.metadata.Distribution] = []
+    library = f"nvidia/cu{wheel_major}/lib/libcusparse.so.12"
+    library_path = tmp_path / library
+    library_path.parent.mkdir(parents=True)
+    library_path.touch()
+    for name, version in names:
+        directory = tmp_path / f"{name}-{version}.dist-info"
+        directory.mkdir()
+        (directory / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n")
+        if name == wheel_name:
+            (directory / "RECORD").write_text(f"{library},,\n")
+        distributions.append(importlib.metadata.PathDistribution(directory))
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: distributions)
+
     facts = collect_cuda_environment(initialize_backend=False)
-    if len(facts.plugin_majors) != 1:
-        pytest.skip("A unique CUDA JAX plugin is required")
-    preloads = jax_plugin_preloads(facts.plugin_majors[0])
-    assert len({soname for soname, _ in preloads}) == len(preloads)
-    assert all(Path(path).is_file() for _, path in preloads)
+
+    assert facts.requested_major == 13
+    assert facts.plugin_majors == (() if plugin_major is None else (plugin_major,))
+    assert facts.foreign_nvidia_distributions == (
+        () if wheel_major == 13 else (wheel_name,)
+    )
+    assert facts.wheel_library_majors == (
+        (str((tmp_path / library).resolve()), wheel_major),
+    )
 
 
 def test_provider_closure_host_helper_resolves_system_libraries() -> None:
@@ -482,4 +545,5 @@ def test_cuda_runtime_major_matches_plugin() -> None:
         pytest.skip("No CUDA device")
     report = cuda_environment()
     assert report.facts.runtime_version is not None
-    assert report.facts.runtime_version[0] == report.facts.plugin_majors[0]
+    assert report.facts.plugin_majors == (13,)
+    assert report.facts.runtime_version[0] == 13

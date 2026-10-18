@@ -140,13 +140,13 @@ The base install uses CPU JAX. For NVIDIA GPUs on Linux, choose one CUDA major:
 
 ```bash
 pip install phydrax             # CPU
-pip install "phydrax[cuda12]"    # Driver reports CUDA >= 12.0 (R525+)
 pip install "phydrax[cuda13]"    # Driver reports CUDA >= 13.0 (R580+)
 ```
 
-The CUDA extras install JAX's CUDA plugin, NVIDIA wheels, and an exclusivity
-marker. On Linux x86-64, matching CUDA 12 and CUDA 13 companion wheels include
-cuDSS, AmgX, and QUDA; aarch64 has no companion yet. The extras cannot be combined.
+The CUDA 13 extra installs JAX's CUDA plugin, NVIDIA wheels, and a metadata
+marker recording installed CUDA intent. On Linux x86-64, the `phydrax-cuda13`
+companion includes cuDSS, AmgX, and QUDA; aarch64 has no companion yet.
+CUDA 13 is the only supported CUDA major.
 See [Installation](installation.md) for diagnostics, architecture coverage,
 native-provider contracts, and multi-GPU deployment.
 

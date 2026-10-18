@@ -16,8 +16,13 @@ checkpoints.
 
 Every exact component is admitted only by an owner with the same execution
 identity. A restart on the topology that wrote the checkpoint is ``"bitwise"``
-and retains those owners unchanged. An explicitly admitted restart on a
-different mesh first matches the topology-neutral numerical identity and
+and retains those owners and all numerical leaves unchanged. With unchanged
+backend/compiler settings, the default deterministic reduced/cochain deposition
+also preserves the continued trajectory. An explicitly selected fast cochain
+accumulation policy permits nondeterministic GPU sums and does not promise
+bitwise continuation; checkpointing does not change that execution policy.
+An explicitly admitted restart on a different mesh first matches the
+topology-neutral numerical identity and
 component schema, then rebinds only the field, clock, boundary, field-history,
 and moving-window execution owners before repartitioning particles and process
 banks. It is a ``"tolerance"`` restart because the continued run sums deposits
@@ -202,7 +207,12 @@ class PICRestartManifest(StrictModule, NonTrainableState):
 
 
 class PICRestartResult(StrictModule):
-    """A restored run state and its restart-equivalence evidence."""
+    """A restored run state and its topology restart-equivalence evidence.
+
+    ``"bitwise"`` preserves the checkpoint's numerical leaves exactly. Continued
+    evolution additionally retains the run's deterministic numerical execution
+    contract; restoring does not make an explicitly fast reduction deterministic.
+    """
 
     state: Any
     auxiliary_states: tuple[Any, ...]

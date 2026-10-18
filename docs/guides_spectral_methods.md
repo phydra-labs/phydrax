@@ -740,9 +740,9 @@ CUDA_VISIBLE_DEVICES=0,1 python -m benchmarks.distributed_spectral \
 
 Compare the same global shape with `--campaign one-device-functional --mesh-shape 1`
 for strong scaling; grow the global shape in proportion to device count for weak
-scaling. Use fresh processes and no competing workloads. A two-process launch must
-assign one GPU per rank; output paths acquire `.process-N` suffixes. A physical
-pencil campaign requires two nondegenerate mesh axes, so two GPUs are insufficient.
+scaling. Use fresh processes and no competing workloads. Multi-process launches
+must assign disjoint GPU sets to ranks; output paths acquire `.process-N` suffixes.
+A physical pencil campaign requires two nondegenerate mesh axes, so two GPUs are insufficient.
 Generate the repository's real dependency lock with `uv lock` before capturing
 benchmark source/build identity.
 
@@ -774,6 +774,37 @@ generated-code bytes exclude vendor library binaries.
 The two-process runs completed successfully but emitted JAX/PJRT
 `WatchTasksAsync` connection-refused warnings during shutdown; these are retained,
 not suppressed. These measurements do not qualify multi-host or pencil execution.
+
+The four-H100 80GB HBM3 NV18 campaign used driver 580.126.09, JAX/JAXlib
+0.11.2, CUDA 13.4.92, and explicit `NCCL_NVLS_ENABLE=0`. Fresh uncontended
+processes used five warmed samples, disabled persistent compilation caching,
+and a 16 GiB native plan budget. Single-process slab medians:
+
+| Precision | Global grid | One GPU | Two GPUs | Four GPUs |
+| --- | --- | ---: | ---: | ---: |
+| float64 | 128³ | 0.508 ms | 1.120 ms | 0.864 ms |
+| float64 | 256³ | 2.039 ms | 1.987 ms | 1.727 ms |
+| float64 | 512³ | 10.625 ms | 9.384 ms | 5.472 ms |
+| float32 | 512³ | 5.767 ms | 5.062 ms | 3.778 ms |
+
+The float64 512³ four-GPU slab measured 5.881 ms with two processes owning
+two GPUs each and 5.444 ms with four processes owning one GPU each. These
+multi-process medians aggregate corresponding samples by their rank maximum.
+A 2×2 pencil measured 6.235 ms for 512³ in one process and 1.850 ms for 256³
+in four processes; all layouts passed the bounded independent reference,
+full-grid round-trip, and adjoint gates. Across the single-process sweeps,
+float64 maximum round-trip/adjoint defects were 1.89e-15/2.72e-15; float32
+defects were 1.12e-6/4.54e-7.
+
+For the float64 512³ four-GPU slab, XLA reported 512 MiB each of argument,
+output, and temporary storage per partition. The pencil's temporary estimate
+was 1 GiB per partition. The global complex input and output each occupy
+2 GiB, and the two changed inputs retain 4 GiB. These are distinct compiler
+and logical-storage quantities, not a total-device-memory bound.
+`benchmarks/h100_qualification.json` retains all capacity sweeps, raw samples,
+phase timings, memory observations, and per-process evidence. PJRT shutdown
+warnings remain recorded. This qualifies the exercised same-host layouts,
+not default NVLS, multi-host communication, or downstream production solvers.
 
 Consumer boundaries remain distinct. Distributed LES admits exactly `()`, `(3,)`,
 and `(3, 3)` and owns its live closure/method/checkpoint reservation. PSATD derives

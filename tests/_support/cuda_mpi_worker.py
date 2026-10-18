@@ -77,9 +77,15 @@ def input_values(rank: int, step: int, dtype: np.dtype) -> np.ndarray:
 
 
 def operations(provider: Mpi4JaxCollectiveProvider, rank: int) -> dict[str, Operation]:
+    size = provider.communicator.Get_size()
+
     def exchange(value: jax.Array) -> jax.Array:
         return provider.sendrecv(
-            value, source=1 - rank, destination=1 - rank, sendtag=19, recvtag=19
+            value,
+            source=(rank - 1) % size,
+            destination=(rank + 1) % size,
+            sendtag=19,
+            recvtag=19,
         )
 
     return {
@@ -98,6 +104,7 @@ def primal_phase(
     dtype: np.dtype,
     first_step: int,
 ) -> list[dict[str, object]]:
+    size = provider.communicator.Get_size()
     compiled = {
         name: jax.jit(operation) for name, operation in operations(provider, rank).items()
     }
@@ -105,16 +112,16 @@ def primal_phase(
     # Reuse each executable with changed inputs; synchronize every result before
     # advancing to the next MPI call or issuing control-communicator traffic.
     for step in range(first_step, first_step + 3):
-        inputs = [input_values(peer, step, dtype) for peer in range(2)]
+        inputs = [input_values(peer, step, dtype) for peer in range(size)]
         value = jax.device_put(inputs[rank], device)
         assert value.devices() == {device}
-        total = inputs[0] + inputs[1]
+        total = np.sum(inputs, axis=0, dtype=dtype)
         expected = {
             "sum": total,
-            "mean": total / np.asarray(2, dtype=dtype),
-            "maximum": np.maximum(*inputs),
-            "minimum": np.minimum(*inputs),
-            "sendrecv": inputs[1 - rank],
+            "mean": total / np.asarray(size, dtype=dtype),
+            "maximum": np.maximum.reduce(inputs),
+            "minimum": np.minimum.reduce(inputs),
+            "sendrecv": inputs[(rank - 1) % size],
         }
         results = {
             name: assert_result(operation(value), expected[name], device)
@@ -148,31 +155,32 @@ def differentiation_phase(
     dtype: np.dtype,
 ) -> dict[str, object]:
     routes = operations(provider, rank)
-    inputs = [input_values(peer, 2, dtype) for peer in range(2)]
-    seeds = [np.asarray([peer + 2, 2 * peer + 1], dtype=dtype) for peer in range(2)]
+    size = provider.communicator.Get_size()
+    inputs = [input_values(peer, 2, dtype) for peer in range(size)]
+    seeds = [np.asarray([peer + 2, 2 * peer + 1], dtype=dtype) for peer in range(size)]
     value = jax.device_put(inputs[rank], device)
     seed = jax.device_put(seeds[rank], device)
-    total = inputs[0] + inputs[1]
+    total = np.sum(inputs, axis=0, dtype=dtype)
     expected_primals = {
         "sum": total,
-        "mean": total / np.asarray(2, dtype=dtype),
-        "sendrecv": inputs[1 - rank],
+        "mean": total / np.asarray(size, dtype=dtype),
+        "sendrecv": inputs[(rank - 1) % size],
     }
     results: dict[str, object] = {}
     for name in ("sum", "mean"):
         primal, tangent = jax.jit(jvp_operation(routes[name]))(value, seed)
-        expected = seeds[0] + seeds[1]
+        expected = np.sum(seeds, axis=0, dtype=dtype)
         if name == "mean":
-            expected = expected / np.asarray(2, dtype=dtype)
+            expected = expected / np.asarray(size, dtype=dtype)
         assert_result(primal, expected_primals[name], device)
         results[f"{name}.jvp"] = assert_result(tangent, expected, device)
         jax.effects_barrier()
     for name in ("sum", "mean", "sendrecv"):
         primal, adjoint = jax.jit(vjp_operation(routes[name]))(value, seed)
         # mpi4jax's SUM transpose is rank-local identity, not another reduction.
-        expected = seeds[1 - rank] if name == "sendrecv" else seeds[rank]
+        expected = seeds[(rank + 1) % size] if name == "sendrecv" else seeds[rank]
         if name == "mean":
-            expected = expected / np.asarray(2, dtype=dtype)
+            expected = expected / np.asarray(size, dtype=dtype)
         assert_result(primal, expected_primals[name], device)
         results[f"{name}.vjp"] = assert_result(adjoint, expected, device)
         jax.effects_barrier()
@@ -217,6 +225,7 @@ def lifecycle_phases(
     control: MPI.Intracomm, device: jax.Device, dtype: np.dtype, direct: bool
 ) -> list[dict[str, object]]:
     rank = control.Get_rank()
+    size = control.Get_size()
     records: list[dict[str, object]] = []
     for generation in range(2):
         # Never mix mpi4py control traffic with deferred device traffic.
@@ -240,17 +249,20 @@ def lifecycle_phases(
         del provider
         # Provider destruction must not free the caller-owned communicator.
         assert communicator.Get_rank() == rank
-        assert communicator.Get_size() == 2
+        assert communicator.Get_size() == size
         communicator.Free()
         assert communicator == MPI.COMM_NULL
         record["caller_released"] = True
-        assert control.allgather(generation) == [generation, generation]
+        assert control.allgather(generation) == [generation] * size
         records.append(record)
     return records
 
 
 def main() -> None:
-    mode, placement, dtype_name = sys.argv[1:]
+    mode, placement, dtype_name, requested_ranks = sys.argv[1:]
+    size = int(requested_ranks)
+    assert size >= 2, size
+    assert placement in ("distinct-gpus", "shared-gpu"), placement
     direct = os.environ["MPI4JAX_USE_CUDA_MPI"] == "1"
     availability = mpi4jax_availability()
     if not availability.available:
@@ -258,11 +270,15 @@ def main() -> None:
     cuda_devices = [
         device for device in jax.devices() if device_platform(device) == "cuda"
     ]
-    required = 2 if placement == "distinct-gpus" else 1
-    if len(cuda_devices) < required:
+    required = size if placement == "distinct-gpus" else 1
+    if len(cuda_devices) < required or (
+        placement == "distinct-gpus" and len(cuda_devices) != size
+    ):
         skip(
-            f"{placement} requires {required} visible CUDA devices; found {len(cuda_devices)}"
+            f"{placement} requires {'exactly' if placement == 'distinct-gpus' else 'at least'} "
+            f"{required} visible CUDA devices; found {len(cuda_devices)}"
         )
+    assert jax.process_count() == 1, "Rank-local MPI must not bootstrap JAX multi-host"
     dtype = np.dtype(dtype_name)
     assert jax.config.x64_enabled, (
         "JAX_ENABLE_X64=true is required for this qualification"
@@ -297,21 +313,25 @@ def main() -> None:
         )
         return
     assert mode == "run", mode
-    assert control.Get_size() == 2
+    assert control.Get_size() == size
     shared = control.Split_type(MPI.COMM_TYPE_SHARED)
     shared_rank_count = shared.Get_size()
     shared.Free()
-    assert shared_rank_count == 2, shared_rank_count
+    assert shared_rank_count == size, shared_rank_count
     rank = control.Get_rank()
     device = cuda_devices[rank if placement == "distinct-gpus" else 0]
     ownership = control.allgather((MPI.Get_processor_name(), cuda_uuid(device)))
     assert len({physical_uuid for _, physical_uuid in ownership}) == required, ownership
+    assert len({host for host, _ in ownership}) == 1, ownership
     phases = lifecycle_phases(control, device, dtype, direct)
     control.Free()
     print(
         json.dumps(
             {
                 "rank": rank,
+                "mpi_ranks": size,
+                "shared_memory_ranks": shared_rank_count,
+                "physical_multigpu": placement == "distinct-gpus",
                 "dtype": dtype_name,
                 "placement": placement,
                 "gpu_direct": direct,

@@ -298,19 +298,19 @@ See LICENSES/SPINEAX-MIT.txt.
 QUDA
 Copyright (c) 2009-2022, QUDA Developers
 Licensed under the MIT License and accompanying bundled-component terms.
-The CUDA companions statically link QUDA for single-process lattice kernels.
+The CUDA 13 companion statically links QUDA for single-process lattice kernels.
 See LICENSES/QUDA-MIT.txt for the upstream license and bundled notices.
 
 NVIDIA AmgX
 Copyright (c) 2017 - 2024 NVIDIA CORPORATION. All rights reserved.
 Licensed under the BSD 3-Clause License, with bundled-component notices.
-The CUDA companions statically link AmgX for algebraic multigrid.
+The CUDA 13 companion statically links AmgX for algebraic multigrid.
 See LICENSES/AMGX-BSD-3-CLAUSE.txt and LICENSES/AMGX-NOTICES.txt; the latter
 retains the upstream NOTICES for bundled components.
 
 Eigen 3.4
 Licensed under the Mozilla Public License 2.0.
-Eigen headers are compiled into the QUDA component of the CUDA companions.
+Eigen headers are compiled into the QUDA component of the CUDA 13 companion.
 See LICENSES/EIGEN-MPL-2.0.txt. Corresponding upstream source:
 https://gitlab.com/libeigen/eigen/-/archive/e67c494cba7180066e73b9f6234d0b2129f1cdf5.tar.bz2
 

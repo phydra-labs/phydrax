@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -43,9 +44,11 @@ def _execution_group(devices: Any) -> Any:
     )
 
 
-def _problem(*, refinement_ratio: int = 2, coarsen: bool = False) -> Any:
+def _problem(
+    *, refinement_ratio: int = 2, coarsen: bool = False, coarse_blocks: int = 4
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
+        (phx.discretization.UniformCellAxisSpec(4 * coarse_blocks, periodic=True),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     hierarchy = phx.discretization.BlockHierarchyPlan(
@@ -54,21 +57,21 @@ def _problem(*, refinement_ratio: int = 2, coarsen: bool = False) -> Any:
             phx.discretization.BlockLevelPlan(
                 0,
                 (4,),
-                4,
+                coarse_blocks,
                 halo_width=1,
                 refinement_ratio=refinement_ratio,
             ),
             phx.discretization.BlockLevelPlan(
                 1,
                 (4,),
-                max(8, 4 * refinement_ratio),
+                max(8, coarse_blocks * refinement_ratio),
                 halo_width=1,
             ),
         ),
     )
     fd = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = fd.initial_topology()
-    tags = jnp.zeros((4, 4), dtype="bool").at[2, 1:3].set(True)
+    tags = jnp.zeros((coarse_blocks, 4), dtype=jnp.bool_).at[2, 1:3].set(True)
     compilation = fd.compile_topology(initial, (tags,))
     assert compilation.status.successful
     topology = compilation.topology
@@ -141,15 +144,20 @@ def _repository(tmp_path: Any) -> Any:
     )
 
 
-@pytest.mark.skipif(len(jax.devices()) < 2, reason="requires at least two JAX devices")
-def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
+@pytest.mark.parametrize("part_count", [2, 4], ids=["two-parts", "four-parts"])
+def test_wave_amr_step_checkpoint_and_changed_partition_restart(
     tmp_path: Any,
     monkeypatch: Any,
+    part_count: int,
 ) -> None:
     """One accepted-state lifecycle binds restart, topology, and repartition evidence."""
-    hierarchy, prepared, state = _problem()
-    group = _execution_group(jax.devices()[:2])
-    partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
+    if len(jax.devices()) < part_count:
+        pytest.skip(f"Requires {part_count} JAX devices.")
+    # Each part retains leaf support when one coarse block is fully refined.
+    hierarchy, prepared, state = _problem(coarse_blocks=2 * part_count)
+    repartition_costs = jnp.ones((2 * part_count,), dtype=jnp.float64).at[0].set(3.0)
+    group = _execution_group(jax.devices()[:part_count])
+    partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, part_count)
     source = prepared.prepare_distributed(
         partition,
         maximum_bytes=100_000_000,
@@ -240,7 +248,7 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         partition,
         maximum_bytes=100_000_000,
         execution_group=group,
-        costs=(jnp.asarray([100.0, 1.0, 1.0, 1.0]), None),
+        costs=(repartition_costs, None),
     )
     assert target.execution is not None and target.hierarchy is not None
     migration = source.hierarchy.migration_to(target.hierarchy)
@@ -270,7 +278,7 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         prepared.background,
     )
     successor_distribution = successor.prepare_distributed(
-        phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
+        phx.discretization.BlockAMRPartitionPlan(hierarchy, part_count),
         maximum_bytes=100_000_000,
         execution_group=group,
     )
@@ -330,10 +338,10 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
         np.testing.assert_array_equal(actual, expected_level)
 
     successor_repartition = successor.prepare_distributed(
-        phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
+        phx.discretization.BlockAMRPartitionPlan(hierarchy, part_count),
         maximum_bytes=100_000_000,
         execution_group=group,
-        costs=(jnp.asarray([100.0, 1.0, 1.0, 1.0]), None),
+        costs=(repartition_costs, None),
     )
     migrated_successor = successor.migrate_distributed_state(
         successor_distribution,
@@ -553,7 +561,7 @@ def test_high_ratio_topology_preflight_rejects_before_padded_route_allocation(
 def test_multiprocess_checkpoint_local_publications_form_exact_global_inventory(
     tmp_path: Any,
 ) -> None:
-    hierarchy, prepared, state = _problem()
+    hierarchy, prepared, state = _problem(coarse_blocks=2 * jax.process_count())
     devices_by_process = {}
     for device in sorted(
         jax.devices(), key=lambda value: (value.process_index, value.id)
@@ -572,7 +580,21 @@ def test_multiprocess_checkpoint_local_publications_form_exact_global_inventory(
         execution.pack_canonical_values(prepared.layout.bind_state(state.psi)),
         state.scale_factor,
     )
-    repository = _repository(tmp_path)
+    # Independent pytest ranks receive different temporary directories. All
+    # checkpoint writers must publish into the coordinator's shared repository.
+    directory = str(tmp_path).encode("utf-8")
+    size = int(
+        multihost_utils.broadcast_one_to_all(np.asarray(len(directory), dtype=np.int32))
+    )
+    encoded = np.zeros((size,), dtype=np.uint8)
+    if jax.process_index() == 0:
+        encoded[:] = np.frombuffer(directory, dtype=np.uint8)
+    shared_directory = (
+        np.asarray(multihost_utils.broadcast_one_to_all(encoded))
+        .tobytes()
+        .decode("utf-8")
+    )
+    repository = _repository(Path(shared_directory))
     publication, checkpoint = execution.publish_checkpoint(
         repository,
         "multiprocess-wave-amr-checkpoint",

@@ -360,6 +360,28 @@ lowering 4.439 s, compilation 16.250 s, rebuild 7.291 s, and the public
 post-migration call 21.780 s. Reusing prepared execution is essential; the warmed
 table must not be interpreted as end-to-end migration throughput.
 
+The four-H100 80GB HBM3 NV18 campaign used the same two-layer native-JAX
+route with driver 580.126.09, CUDA 13.4.92, JAX/JAXlib 0.11.2, and explicit
+`NCCL_NVLS_ENABLE=0`. Five warmed synchronized samples per row were collected
+without competing workloads:
+
+| Campaign | Atoms per owner or fixed total | One GPU | Two GPUs | Four GPUs |
+| --- | ---: | ---: | ---: | ---: |
+| Fixed total | 128 | 35.096 ms | 42.870 ms | 37.243 ms |
+| Fixed total | 2048 | 507.424 ms | 299.158 ms | 184.993 ms |
+| Fixed per owner | 48 | 15.007 ms | 37.571 ms | 50.771 ms |
+| Fixed per owner | 768 | 202.896 ms | 221.797 ms | 245.744 ms |
+
+Every row passed evaluation and migration/commit gates. The 2048-atom
+four-owner row migrated 47 atoms; the 768-atoms-per-owner four-owner row
+migrated 71. Small workloads do not amortize communication. For 2048 atoms
+on four GPUs, preparation took 12.446 s, lowering 3.683 s, compilation
+14.418 s, rebuild 6.327 s, and public post-migration evaluation 19.161 s.
+These costs are excluded from the warmed table.
+`benchmarks/h100_qualification.json` retains both capacity sweeps, samples,
+compiler memory, logical bytes, and process-local observations. These are
+single-process native-JAX results, not distributed Pallas or multi-host evidence.
+
 ### Dynamics, migration, and model updates
 
 The owner-local state is a complete accepted continuation state. Its owner-blocked rows

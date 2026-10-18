@@ -10,6 +10,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import jax
 import jax.numpy as jnp
@@ -223,6 +224,8 @@ def test_inventory_uses_owner_capacity_for_shared_identity(
     monkeypatch.setattr(runtime_module.jax, "devices", lambda: list(reversed(devices)))
     monkeypatch.setattr(runtime_module.jax, "process_count", lambda: process_count)
 
+    monkeypatch.setattr(runtime_module, "_local_host_boot_id", lambda: bytes([1]) * 16)
+
     def observe(rank: int) -> ResourceInventory:
         monkeypatch.setattr(runtime_module.jax, "process_index", lambda: rank)
         local_samples = tuple(
@@ -237,7 +240,9 @@ def test_inventory_uses_owner_capacity_for_shared_identity(
             lambda: replace(_host_sample(300 * _MIB), process_index=rank),
         )
 
-        def gather(local: NDArray[np.int64], *, tiled: bool) -> NDArray[np.int64]:
+        def gather(local: NDArray, *, tiled: bool) -> NDArray:
+            if local.dtype == np.uint8:
+                return np.tile(local, (process_count, 1))
             # Other ranks' guesses cannot override a device owner's observation.
             observed = np.full((process_count, len(devices)), 999 << 30, dtype=np.int64)
             for index, device in enumerate(devices):
@@ -273,6 +278,170 @@ def test_inventory_uses_owner_capacity_for_shared_identity(
     assert root_execution_group_spec(changed).group_id != (
         root_execution_group_spec(original).group_id
     )
+
+
+@pytest.mark.parametrize(
+    ("platform", "contents", "available"),
+    [
+        ("linux", "12345678-1234-5678-9012-123456789abc\n", True),
+        ("linux", "not-a-boot-uuid", False),
+        ("linux", "00000000-0000-0000-0000-000000000000", False),
+        ("linux", None, False),
+        ("darwin", "12345678-1234-5678-9012-123456789abc", False),
+    ],
+)
+def test_host_identity_requires_available_kernel_boot_id(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    contents: str | None,
+    available: bool,
+) -> None:
+    monkeypatch.setattr(runtime_module.sys, "platform", platform)
+
+    def read_boot_id(path: Path) -> str:
+        assert str(path) == "/proc/sys/kernel/random/boot_id"
+        assert platform == "linux"
+        if contents is None:
+            raise PermissionError("kernel identity unavailable")
+        return contents
+
+    monkeypatch.setattr(runtime_module.Path, "read_text", read_boot_id)
+    identity = runtime_module._local_host_boot_id()
+    assert (identity is not None) is available
+    if available:
+        assert contents is not None
+        assert identity == UUID(contents.strip()).bytes
+
+
+@pytest.mark.parametrize(
+    "host_numbers",
+    [(1,), (1, 1, 1, 1), (1, 1, 2, 2), (1, 2, 3, 4), (1, 1, None, 1)],
+    ids=["single-unchanged", "one-host", "two-hosts", "four-hosts", "unknown-host"],
+)
+def test_discovered_host_mapping_drives_resource_admission(
+    monkeypatch: pytest.MonkeyPatch, host_numbers: tuple[int | None, ...]
+) -> None:
+    process_count = len(host_numbers)
+    devices = tuple(
+        SimpleNamespace(
+            process_index=rank,
+            id=rank,
+            local_hardware_id=0,
+            platform="cpu",
+            device_kind="cpu",
+            client=SimpleNamespace(platform="cpu"),
+        )
+        for rank in range(process_count)
+    )
+    identities = tuple(
+        None if number is None else UUID(int=number).bytes for number in host_numbers
+    )
+    monkeypatch.setattr(runtime_module.jax, "devices", lambda: list(reversed(devices)))
+    monkeypatch.setattr(runtime_module.jax, "process_count", lambda: process_count)
+    monkeypatch.setattr(runtime_module, "sample_device_memory", lambda local: ())
+    inventories = []
+    groups = []
+    for rank in range(process_count):
+        monkeypatch.setattr(runtime_module.jax, "process_index", lambda: rank)
+        monkeypatch.setattr(
+            runtime_module, "_local_host_boot_id", lambda: identities[rank]
+        )
+        sample = replace(_host_sample(300 * _MIB), process_index=rank)
+        monkeypatch.setattr(runtime_module, "sample_host_memory", lambda: sample)
+
+        def gather(local: NDArray, *, tiled: bool) -> NDArray:
+            assert not tiled
+            if local.dtype == np.uint8:
+                assert local.tobytes() == (identities[rank] or bytes(16))
+                return np.stack(
+                    [
+                        np.frombuffer(identity or bytes(16), dtype=np.uint8)
+                        for identity in identities
+                    ]
+                )
+            return np.zeros((process_count, len(devices)), dtype=np.int64)
+
+        monkeypatch.setattr(runtime_module.multihost_utils, "process_allgather", gather)
+        inventory = discover_resource_inventory()
+        group = root_execution_group_spec(inventory)
+        inventories.append(inventory)
+        groups.append(group)
+        expected_hosts = (
+            tuple(
+                (owner, f"linux-boot-{UUID(bytes=identity)}")
+                for owner, identity in enumerate(identities)
+                if identity is not None
+            )
+            if process_count > 1 and all(number is not None for number in host_numbers)
+            else ()
+        )
+        assert inventory.process_host_ids == group.process_host_ids == expected_hosts
+        assert inventory.host_memory == (sample,)
+        assert inventory.device_memory == ()
+        candidate = ExecutionCandidate(
+            "host-admission",
+            "host-admission-requirements",
+            group,
+            resource_evidence=_HOST_EVIDENCE,
+        )
+
+        def admit(
+            host_count: int, envelope: MemoryEnvelope = "declared"
+        ) -> ExecutionPlan:
+            return resolve_execution_plan(
+                ExecutionPolicy(
+                    DistributionMode.AUTO,
+                    resources=ResourceRequest(
+                        1,
+                        512 * _MIB,
+                        host_count=host_count,
+                        process_count=process_count,
+                        memory_envelope=envelope,
+                    ),
+                ),
+                inventory,
+                (candidate,),
+                precision_policy_id="test",
+                solver_policy_id="test",
+            )
+
+        if None in host_numbers:
+            with pytest.raises(ExecutionAdmissionError, match="host mapping evidence"):
+                admit(1)
+            continue
+        host_count = len(set(host_numbers))
+        plan = admit(host_count)
+        assert plan.group == group
+        if host_count < process_count:
+            with pytest.raises(ExecutionAdmissionError, match="fewer distinct hosts"):
+                admit(host_count + 1)
+        if host_count == 1:
+            assert admit(1, "certified").group == group
+        else:
+            with pytest.raises(
+                ExecutionAdmissionError, match="lacks measured available memory"
+            ):
+                admit(host_count, "certified")
+        if process_count == 1:
+            assert (
+                inventory.inventory_id
+                == ResourceInventory(1, 0, inventory.devices).inventory_id
+            )
+    assert len({inventory.inventory_id for inventory in inventories}) == 1
+    assert len({group.group_id for group in groups}) == 1
+    original = inventories[0]
+    if original.process_host_ids:
+        changed = ResourceInventory(
+            process_count,
+            0,
+            original.devices,
+            process_host_ids=tuple(
+                (process, host + "-changed")
+                for process, host in original.process_host_ids
+            ),
+        )
+        assert original.inventory_id != changed.inventory_id
+        assert groups[0].group_id != root_execution_group_spec(changed).group_id
 
 
 @requires_host_probe

@@ -3,10 +3,23 @@
 ## Unreleased
 
 ### Breaking
+- Remove CUDA 12 support, its installation extra, native companion, marker,
+  build/distribution paths, and benchmark artifacts. CUDA 13 is the only
+  supported CUDA major; use `phydrax[cuda13]` with an R580+ driver or the CPU-only
+  install. Build and wheel-qualification CLIs no longer accept `--major`.
+  Retain marker 13 as explicit installed intent and foreign-major diagnostics.
+  H100 qualification requires inspected sm90 device code.
 - Resource-inventory discovery, including `ExecutionRuntime.current()`, is now
   collective across distributed processes so allocator capacities and execution
   identities agree. Every rank must call it in the same collective sequence;
   use `sample_host_memory` and `sample_device_memory` for rank-local observations.
+- Multi-process Linux resource discovery now includes collectively observed
+  kernel boot identities. This changes multi-process inventory and execution-group
+  identities so resource admission can verify host ownership; single-process
+  identities and process-local memory observations remain unchanged.
+- Reduced PIC transfer identities now include deterministic accumulation and
+  stencil-route/particle-slot ordering; old reduced-transfer checkpoint identities
+  are not reused.
 - Rename provider `spineax-cudss` to `cudss` and lattice provider `pyquda` to
   `quda`, with no compatibility aliases. Rename `SpineaxBackend`,
   `SPINEAX_CAPABILITIES`, and `spineax_availability` to `CudssBackend`,
@@ -17,10 +30,9 @@
   policy and plan identities.
 
 ### Added
-- Mutually exclusive `cuda12` and `cuda13` installation extras with JAX's CUDA
-  plugin, NVIDIA wheels, a CUDA-major marker, and matching wheel-only
-  `phydrax-cuda12`/`phydrax-cuda13` companions on Linux x86-64. Both companions
-  include cuDSS, AmgX, and QUDA; cuDSS now also supports CUDA 12.
+- The `cuda13` installation extra with JAX's CUDA plugin, NVIDIA wheels, an
+  installed-intent CUDA-major marker, and the lockstep wheel-only
+  `phydrax-cuda13` companion on Linux x86-64, including cuDSS, AmgX, and QUDA.
 - Device-resident, jittable AmgX and QUDA through public JAX FFI. AmgX uses
   dDDI with explicit float32-promotion evidence, per-RHS native diagnostics,
   and in-place native coefficient refresh while returning independent
@@ -33,7 +45,7 @@
 - `ProviderConfig.library_paths` settings `cuda_cudss`, `cuda_amgx`, and
   `cuda_quda`, with `PHYDRAX_CUDA_CUDSS_LIBRARY`, `PHYDRAX_CUDA_AMGX_LIBRARY`,
   and `PHYDRAX_CUDA_QUDA_LIBRARY` development overrides.
-- CUDA issue codes `companion-missing`, `companion-invalid`,
+- CUDA issue codes `unsupported-cuda-major`, `companion-missing`, `companion-invalid`,
   `companion-version-mismatch`, `companion-major-mismatch`, and
   `native-dependency-missing`.
 - `phydrax.backends.cuda_environment()` and pure `assess_cuda_environment()`,
@@ -46,22 +58,50 @@
   float32/float64 forward, all-operand derivative, mixed-derivative, resource,
   and derivative-order refusal coverage. Other unqualified Ampere variants
   remain refused.
-- `tools/qualify_cuda_wheels.py --required-gpus 2` requires real two-device
-  provider coverage, checks device availability before tests can skip, and
-  runs native lifecycle checks serially.
-- Add fail-closed two-GPU CUDA-aware MPI qualification, dtype/derivative and
-  communicator-lifecycle checks, bounded message-size sweeps against explicit
-  host staging, and separate CUDA-profiler capture regions.
-- Qualify the pinned CUDA 12/13 MPI stacks on two A100s. Large exchanges use
+- `tools/qualify_cuda_wheels.py --required-gpus N` requires successful per-case
+  evidence for every selected device, including concurrent device-local cuDSS,
+  serialized AmgX, independent-process QUDA, and normal/hostile teardown.
+  Missing, skipped, or partial hardware coverage fails qualification.
+- Generalize fail-closed CUDA-aware MPI qualification to explicit rank counts,
+  with ring sendrecv, operation-specific derivatives/refusals, communicator
+  lifecycle checks, complete per-rank evidence, bounded message-size sweeps,
+  and separate CUDA-profiler capture regions.
+- Qualify the pinned CUDA 13 MPI stack on two A100s. Large exchanges use
   CUDA IPC without captured host copies; SUM still stages internally.
+- Retain four-H100 CUDA 13 evidence for all-device native-provider lifecycle,
+  compiled MACE/FMM correctness, two/four-rank CUDA-aware MPI, and 1/2/4-GPU
+  spectral, native-JAX MACE, and reduced-PIC scaling. Exercise 1×4, 2×2,
+  and 4×1 process/device layouts, including four-rank slab/pencil transforms
+  and checkpoint publication. The explicit non-NVLS, single-host profile,
+  native-artifact scope, profiler warnings, and phase-separated measurements
+  are recorded in `benchmarks/h100_qualification.json`; no multi-host or
+  RDMA claim is made.
 
 ### Removed
 - Spineax, pyamgx, PyQUDA, and CuPy provider paths and dependencies in favor
   of the owned CUDA companions.
-- **Breaking:** the `cudss` extra. Use `phydrax[cuda12]` or `phydrax[cuda13]`
+- **Breaking:** the `cudss` extra. Use `phydrax[cuda13]`
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Bind halo reference checks to their selected devices and add real four-device
+  halo, spectral pencil/slab, block-AMR, and native-JAX MACE reference coverage.
+- Include the explicit `NCCL_NVLS_ENABLE` setting in benchmark environment
+  identities. The four-H100 deployment selects non-NVLS collectives explicitly;
+  default multicast initialization remains a host-level configuration failure,
+  not a silently accepted fallback.
+- Report full release architecture coverage only when every release SASS/PTX
+  target is present; an sm90-only companion no longer claims full coverage.
+- Snapshot replicated checkpoint leaves with one local replica through JAX's
+  public local-data API. This avoids JAX 0.11.2's globally sharded self-view
+  failure during four-process publication while preserving canonical ownership,
+  replica numbering, payloads, and checkpoint layout identities.
+- Use native deterministic reductions for reduced PIC deposition and honor the
+  declared accumulation policy for cochain current. Default same-topology GPU
+  restarts retain bitwise continuation without compiler determinism overrides;
+  explicitly fast accumulation retains its documented nondeterministic semantics.
+  Failed native reduced deposits invalidate their array payloads rather than
+  exposing a usable partial result.
 - Give the pinned AmgX implementation per-device cuBLAS and cuSPARSE handles.
   Preparing independent solves on two GPUs no longer reuses the first GPU's
   library handles on the second device.

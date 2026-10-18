@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shlex
 import shutil
@@ -35,11 +36,13 @@ ROOT = Path(__file__).resolve().parents[1]
 TEST = ROOT / "tests/integration/test_cuda_direct_mpi.py"
 
 
-def coverage_errors(data: bytes) -> list[str]:
+def coverage_errors(data: bytes, rank_count: int) -> list[str]:
     """An optional-suite skip is a qualification failure, not successful coverage."""
+    if rank_count < 2:
+        raise ValueError("Qualification requires at least two ranks")
     cases = tuple(ET.fromstring(data).iter("testcase"))
     expected = {
-        f"test_cuda_mpi_collectives[{placement}-{route.value}-{precision.value}]"
+        f"test_cuda_mpi_collectives[ranks-{rank_count}-{placement}-{route.value}-{precision.value}]"
         for placement in ("distinct-gpus", "shared-gpu")
         for route in Route
         for precision in Precision
@@ -60,20 +63,47 @@ def coverage_errors(data: bytes) -> list[str]:
     return errors
 
 
-def aggregate_rows(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """Aggregate matching synchronized samples, not separately computed medians."""
+def validate_record(
+    record: dict[str, Any], rank_count: int, *, profile_capture: bool
+) -> None:
+    """Reject partial topology, ownership, point coverage, and timing evidence."""
+    configuration = record["configuration"]
+    scope = record["scope"]
     ranks = sorted(record["ranks"], key=lambda item: item["rank"])
-    if [rank["rank"] for rank in ranks] != [0, 1] or not record["passed"]:
-        raise ValueError("Measurement must contain two successful ranks")
-    ownership = record["ownership"]
+    expected_ranks = list(range(rank_count))
     if (
-        len({item["gpu_uuid"] for item in ownership}) != 2
-        or record["scope"]["shared_memory_ranks"] != 2
+        rank_count < 2
+        or configuration["ranks"] != rank_count
+        or scope["mpi_ranks"] != rank_count
+        or [rank["rank"] for rank in ranks] != expected_ranks
+        or record["passed"] is not True
     ):
-        raise ValueError("Measurement requires distinct GPUs on one host")
-    if record["configuration"]["profile_capture"]:
+        raise ValueError("Measurement must contain every requested successful rank")
+    ownership = sorted(record["ownership"], key=lambda item: item["rank"])
+    if (
+        [item["rank"] for item in ownership] != expected_ranks
+        or len({item["gpu_uuid"] for item in ownership}) != rank_count
+        or any(not item["gpu_uuid"].startswith("GPU-") for item in ownership)
+        or len({item["host"] for item in ownership}) != 1
+        or scope["hosts"] != 1
+        or scope["shared_memory_ranks"] != rank_count
+        or scope["distinct_gpus"] != rank_count
+    ):
+        raise ValueError(
+            "Measurement requires distinct physical GPUs in one shared-memory domain"
+        )
+    if configuration["profile_capture"] is not profile_capture:
         raise ValueError("Profiler-instrumented timings are not performance evidence")
-    indexed = []
+    if configuration["repeats"] < 1:
+        raise ValueError("Measurement requires a positive repeat count")
+    expected_points = {
+        (operation, precision, size)
+        for operation in configuration["operation"]
+        for precision in configuration["precision"]
+        for size in configuration["sizes"]
+    }
+    if not expected_points:
+        raise ValueError("Measurement must contain requested points")
     for rank in ranks:
         rows = {
             (row["operation"], row["precision"], row["message_bytes_per_rank"]): row
@@ -83,14 +113,30 @@ def aggregate_rows(record: dict[str, Any]) -> list[dict[str, Any]]:
             not row["passed"] for row in rows.values()
         ):
             raise ValueError("Duplicate or unsuccessful MPI measurement point")
-        indexed.append(rows)
-    if indexed[0].keys() != indexed[1].keys():
-        raise ValueError("Ranks measured different MPI point sets")
+        if rows.keys() != expected_points:
+            raise ValueError("Ranks did not measure the complete requested MPI point set")
+        for row in rows.values():
+            samples = row["warm"]["samples_seconds"]
+            if len(samples) != configuration["repeats"] or any(
+                not math.isfinite(sample) or sample <= 0 for sample in samples
+            ):
+                raise ValueError("Rank samples must be positive, finite, and complete")
+
+
+def aggregate_rows(record: dict[str, Any], rank_count: int) -> list[dict[str, Any]]:
+    """Aggregate matching synchronized samples, not separately computed medians."""
+    validate_record(record, rank_count, profile_capture=False)
+    ranks = sorted(record["ranks"], key=lambda item: item["rank"])
+    indexed = [
+        {
+            (row["operation"], row["precision"], row["message_bytes_per_rank"]): row
+            for row in rank["rows"]
+        }
+        for rank in ranks
+    ]
     result = []
     for key in sorted(indexed[0]):
         samples = [index[key]["warm"]["samples_seconds"] for index in indexed]
-        if any(len(values) != record["configuration"]["repeats"] for values in samples):
-            raise ValueError("Rank sample counts differ from the declared repeat count")
         distribution = DurationDistribution(
             tuple(max(pair) for pair in zip(*samples, strict=True))
         )
@@ -112,7 +158,7 @@ def aggregate_rows(record: dict[str, Any]) -> list[dict[str, Any]]:
 def _environment(args: argparse.Namespace) -> dict[str, str]:
     environment = {
         key: os.environ[key]
-        for key in ("HOME", "USER", "LOGNAME", "LANG", "TMPDIR")
+        for key in ("HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "NCCL_NVLS_ENABLE")
         if key in os.environ
     }
     mpi = args.mpi_prefix.resolve()
@@ -124,6 +170,7 @@ def _environment(args: argparse.Namespace) -> dict[str, str]:
             "PYTHONPATH": str(ROOT),
             "PYTHONNOUSERSITE": "1",
             "CUDA_VISIBLE_DEVICES": args.visible_devices,
+            "PHYDRAX_MPI_RANKS": str(args.ranks),
             "JAX_ENABLE_X64": "true",
             "JAX_ENABLE_COMPILATION_CACHE": "false",
             "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
@@ -221,12 +268,14 @@ def _measure(
     command = [
         *_launcher(args, timeout=args.timeout),
         "-np",
-        "2",
+        str(args.ranks),
         str(args.python.absolute()),
         "-m",
         "mpi4py",
         "-m",
         "benchmarks.cuda_mpi",
+        "--ranks",
+        str(args.ranks),
         "--route",
         route.value,
         "--sizes",
@@ -250,11 +299,43 @@ def _measure(
     if evidence["errors"]:
         return
     record = json.loads(result.output("measurement.json"))
-    evidence["measurements"][route.value] = {
-        "record": record,
-        "aggregate": aggregate_rows(record),
-    }
+    try:
+        _validate_workload(record, args, route, profile_capture=False)
+        aggregate = aggregate_rows(record, args.ranks)
+    except ValueError as error:
+        evidence["errors"].append(str(error))
+    else:
+        evidence["measurements"][route.value] = {
+            "record": record,
+            "aggregate": aggregate,
+        }
     write_json_atomic(args.output, evidence)
+
+
+def _validate_workload(
+    record: dict[str, Any],
+    args: argparse.Namespace,
+    route: Route,
+    *,
+    profile_capture: bool,
+    operation: Operation | None = None,
+) -> None:
+    configuration = record["configuration"]
+    expected = {
+        "route": route.value,
+        "sizes": [max(args.sizes)] if profile_capture else sorted(args.sizes),
+        "precision": ["float64"]
+        if profile_capture
+        else [value.value for value in Precision],
+        "operation": [operation.value]
+        if operation is not None
+        else [value.value for value in Operation],
+        "repeats": 3 if profile_capture else args.repeats,
+        "maximum_buffer_bytes": args.maximum_buffer_bytes,
+    }
+    if any(configuration[key] != value for key, value in expected.items()):
+        raise ValueError("Measurement configuration differs from the requested workload")
+    validate_record(record, args.ranks, profile_capture=profile_capture)
 
 
 def _profile(
@@ -278,13 +359,16 @@ def _profile(
     destination.mkdir(parents=True, exist_ok=True)
     artifacts = PinnedFileOutputs(
         str(destination),
-        tuple(PinnedFileRequest(f"rank-{rank}.nsys-rep", 536870912) for rank in (0, 1)),
-        maximum_total_bytes=1073741824,
+        tuple(
+            PinnedFileRequest(f"rank-{rank}.nsys-rep", 536870912)
+            for rank in range(args.ranks)
+        ),
+        maximum_total_bytes=536870912 * args.ranks,
     )
     command = [
         *_launcher(args, timeout=args.timeout),
         "-np",
-        "2",
+        str(args.ranks),
         str(args.nsys.resolve()),
         "profile",
         "--trace=cuda,mpi",
@@ -299,6 +383,8 @@ def _profile(
         "mpi4py",
         "-m",
         "benchmarks.cuda_mpi",
+        "--ranks",
+        str(args.ranks),
         "--route",
         route.value,
         "--sizes",
@@ -329,12 +415,19 @@ def _profile(
     )
     if evidence["errors"]:
         return
+    record = json.loads(result.output("profile-workload.json"))
+    try:
+        _validate_workload(record, args, route, profile_capture=True, operation=operation)
+    except ValueError as error:
+        evidence["errors"].append(str(error))
+        write_json_atomic(args.output, evidence)
+        return
     evidence["profiles"].append(
         {
             "route": route.value,
             "operation": operation.value,
             "directory": str(destination),
-            "record": json.loads(result.output("profile-workload.json")),
+            "record": record,
         }
     )
     write_json_atomic(args.output, evidence)
@@ -351,8 +444,15 @@ def _validate_arguments(
         parser.error("sizes must be multiples of eight within the explicit buffer budget")
     if len(set(args.sizes)) != len(args.sizes):
         parser.error("message sizes must not repeat")
-    if len(args.visible_devices.split(",")) != 2:
-        parser.error("declare exactly two CUDA-visible devices")
+    devices = [device.strip() for device in args.visible_devices.split(",")]
+    if (
+        len(devices) < 2
+        or any(not device for device in devices)
+        or len(set(devices)) != len(devices)
+    ):
+        parser.error("declare at least two distinct CUDA-visible devices")
+    args.visible_devices = ",".join(devices)
+    args.ranks = len(devices)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -385,7 +485,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     environment = _environment(args)
     evidence: dict[str, Any] = {
-        "scope": "single-host, two distinct GPUs; CUDA awareness does not imply zero host copies or network RDMA",
+        "scope": f"single-host, {args.ranks} distinct GPUs; CUDA awareness does not imply zero host copies or network RDMA",
+        "requested_ranks": args.ranks,
         "environment": environment,
         "commands": [],
         "errors": [],
@@ -422,7 +523,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if evidence["errors"]:
         return 1
-    evidence["errors"].extend(coverage_errors(result.output("tests.xml")))
+    evidence["errors"].extend(coverage_errors(result.output("tests.xml"), args.ranks))
     write_json_atomic(args.output, evidence)
     if evidence["errors"]:
         return 1

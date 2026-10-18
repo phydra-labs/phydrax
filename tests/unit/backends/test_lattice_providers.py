@@ -1,8 +1,10 @@
 """Consumer-visible comparisons for every admitted lattice provider."""
 
+import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from math import prod
 from pathlib import Path
 from typing import Any
@@ -91,6 +93,8 @@ def test_external_lattice_provider_contract(
         def compare(actual: Any, expected: Any) -> None:
             np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
             assert actual.dtype == expected.dtype
+            if selector == "quda":
+                assert actual.devices() == links.devices()
 
         for name, mask in (("gauge_action", action_mask), ("gauge_force", force_mask)):
             action = getattr(external, name)
@@ -324,25 +328,34 @@ def test_quda_refuses_unsupported_geometry(constraint: str) -> None:
         )
 
 
-def _quda_subprocess(source: str, environment: dict[str, str]) -> None:
+def _quda_subprocess(
+    source: str, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
     root = Path(__file__).resolve().parents[3]
+    qualifying = "PHYDRAX_CUDA_QUALIFICATION_GPUS" in environment
+    environment = {
+        key: value for key, value in environment.items() if key != "LD_LIBRARY_PATH"
+    }
     completed = subprocess.run(
         [sys.executable, "-c", source],
-        cwd=root,
+        cwd=Path.cwd() if qualifying else root,
         env={
             **environment,
-            "PYTHONPATH": str(root),
+            "PYTHONPATH": (
+                environment.get("PYTHONPATH", str(root)) if qualifying else str(root)
+            ),
             "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
             "OMP_NUM_THREADS": "1",
         },
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
         check=False,
     )
     if completed.returncode == 77:
         pytest.skip(completed.stdout.strip())
     assert completed.returncode == 0, completed.stdout + completed.stderr
+    return completed
 
 
 _QUDA_SUBPROCESS_SETUP = """
@@ -363,7 +376,49 @@ def action(u: jax.Array, m: jax.Array) -> jax.Array:
 
 
 @pytest.mark.cuda_native
+def test_quda_independent_process_on_each_selected_device(
+    record_property: Callable[[str, object], None],
+) -> None:
+    _quda_provider()
+    visible = jax.devices("gpu")
+    count = int(os.environ.get("PHYDRAX_CUDA_QUALIFICATION_GPUS", len(visible)))
+    assert 0 < count <= len(visible), (
+        "Required QUDA qualification devices are unavailable"
+    )
+    covered = []
+    for index, device in enumerate(visible[:count]):
+        completed = _quda_subprocess(
+            f"DEVICE_INDEX = {index}\n"
+            + """
+import json
+import jax
+import numpy as np
+from phydrax._jax_config import default_device
+from tests.unit.backends.test_lattice_providers import test_external_lattice_provider_contract
+device = jax.devices("gpu")[DEVICE_INDEX]
+# One QUDA context per child process; never imply multi-device QUDA support.
+with default_device(device):
+    for dtype in (np.complex64, np.complex128):
+        test_external_lattice_provider_contract("quda", dtype, 4)
+jax.effects_barrier()
+print("QUDA_DEVICE " + json.dumps(device.id), flush=True)
+""",
+            dict(os.environ),
+        )
+        reports = [
+            json.loads(line.removeprefix("QUDA_DEVICE "))
+            for line in completed.stdout.splitlines()
+            if line.startswith("QUDA_DEVICE ")
+        ]
+        assert reports == [device.id], completed.stdout + completed.stderr
+        covered.extend(reports)
+    record_property("cuda_native_devices", json.dumps(covered))
+
+
+@pytest.mark.cuda_native
 def test_quda_refuses_second_device() -> None:
+    if os.environ.get("PHYDRAX_CUDA_QUALIFICATION_GPUS") == "1":
+        pytest.skip("QUDA second-device refusal requires two selected CUDA devices")
     _quda_subprocess(
         _QUDA_SUBPROCESS_SETUP
         + """

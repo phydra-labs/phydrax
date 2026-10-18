@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 import time
@@ -21,10 +22,16 @@ from jax.experimental import multihost_utils
 
 from phydrax import config as pxconfig
 from phydrax.execution import (
+    DistributionMode,
+    ExecutionCandidate,
+    ExecutionPolicy,
+    ExecutionRequirements,
     ExecutionRuntime,
     global_weighted_mean,
     launch_local_processes,
     LocalProcessLaunchPlan,
+    resolve_execution_plan,
+    ResourceRequest,
     runtime_info,
     shard_array_axis,
 )
@@ -72,6 +79,31 @@ def run(size: int, iterations: int) -> dict[str, object]:
         multihost_utils.process_allgather(local_hardware_ids, tiled=False)
     ).reshape(info.process_count, -1)
     padded_size = ((size + device_count - 1) // device_count) * device_count
+    requirements = ExecutionRequirements("substrate-smoke")
+    request = ResourceRequest(
+        cpu_cores=1,
+        memory_bytes=16 * padded_size * np.dtype(np.float64).itemsize,
+        accelerator_count=sum(
+            device.platform == "gpu" for device in runtime.inventory.devices
+        ),
+        host_count=1,
+        process_count=info.process_count,
+    )
+    admitted = resolve_execution_plan(
+        ExecutionPolicy(DistributionMode.AUTO, resources=request),
+        runtime.inventory,
+        (
+            ExecutionCandidate(
+                "substrate-smoke",
+                requirements.requirements_id,
+                runtime.root_group.spec,
+                estimated_memory_bytes=request.memory_bytes,
+            ),
+        ),
+        precision_policy_id="substrate-smoke-float64",
+        solver_policy_id="substrate-smoke-diagonal-pcg",
+    )
+    assert admitted.group is not None
     host = np.linspace(0.0, 1.0, padded_size, dtype=np.float64)
     valid = np.arange(padded_size) < size
     values = shard_array_axis(host, runtime.root_group)
@@ -117,6 +149,11 @@ def run(size: int, iterations: int) -> dict[str, object]:
             "platforms": list(info.platforms),
             "execution_group_id": runtime.root_group.spec.group_id,
             "local_hardware_ids_by_process": hardware_ids.tolist(),
+            "nccl_nvls_enable": os.environ.get("NCCL_NVLS_ENABLE"),
+            "inventory_id": runtime.inventory.inventory_id,
+            "process_host_ids": [
+                list(record) for record in runtime.inventory.process_host_ids
+            ],
         },
         "problem": {
             "logical_size": size,
@@ -124,6 +161,13 @@ def run(size: int, iterations: int) -> dict[str, object]:
             "padded_size": padded_size,
             "iterations": iterations,
             "qualification": "bootstrap-and-collective-smoke",
+        },
+        "resource_admission": {
+            "admitted": True,
+            "request": request.to_payload(),
+            "execution_plan_id": admitted.execution_plan_id,
+            "group_id": admitted.group.group_id,
+            "memory_envelope": request.memory_envelope,
         },
         "weighted_mean": {
             "seconds": mean_seconds,
@@ -188,16 +232,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         print(results[0].stdout.decode("utf-8").strip())
         return
-    if arguments.worker:
-        local_devices = jax.local_devices()
-        if any(device.platform == "gpu" for device in local_devices):
-            start = jax.process_index() * arguments.devices_per_process
-            expected = list(range(start, start + arguments.devices_per_process))
-            actual = [device.local_hardware_id for device in local_devices]
-            if actual != expected:
-                raise RuntimeError(
-                    f"local worker GPU ownership differs: expected={expected}, actual={actual}"
-                )
+    local_devices = jax.local_devices()
+    if arguments.worker and any(device.platform == "gpu" for device in local_devices):
+        start = jax.process_index() * arguments.devices_per_process
+        expected = list(range(start, start + arguments.devices_per_process))
+        actual = [device.local_hardware_id for device in local_devices]
+        if actual != expected:
+            raise RuntimeError(
+                f"local worker GPU ownership differs: expected={expected}, actual={actual}"
+            )
     result = run(arguments.size, arguments.iterations)
     if jax.process_index() == 0:
         print(json.dumps(result, allow_nan=False, sort_keys=True))

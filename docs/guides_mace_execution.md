@@ -379,6 +379,12 @@ warpgroup channel tiles:
   does not measure register/shared-memory use or establish graph-scale memory
   or performance claims. This is evidence for the exercised tuple, not every
   Ampere device, older JAX release, or distributed accelerated MACE.
+- H100 80GB HBM3 (9.0), driver 580.126.09, JAX/JAXlib 0.11.2, and CUDA
+  13.4.92 passed the same compiled float32/float64 deterministic/compensated
+  correctness matrix, including operand derivatives through order two,
+  inactive/invalid lanes, resource refusal, and third-order refusal.
+  This is single-device compiled-kernel evidence. The separate H100
+  owner-scaling campaign uses native JAX, not distributed accelerated coupling.
 - RTX 5090 (12.0) was exercised with JAX/JAXlib 0.11.2 and the CUDA 13 plugin.
   Forward and operand derivatives agree with native JAX at float32 tolerances
   `rtol=atol=2e-5` (reverse mode `rtol=2e-4`); float64 forward agrees at

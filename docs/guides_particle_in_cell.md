@@ -795,8 +795,19 @@ restored = phx.solver.PICRestartPlan(other_run).restore(repository, checkpoint)
 restored.state, restored.restart_class  # "bitwise" or "tolerance"
 ```
 
-A cochain or reduced-field restart on the topology that wrote the checkpoint continues
-bitwise. Its decomposition may change only at restart: a different admitted mesh
+A cochain or reduced-field restart on the topology that wrote the checkpoint restores
+every numerical leaf bit-for-bit and, with the default deterministic deposition and
+unchanged backend/compiler settings, continues bitwise. Reduced CIC deposits use the
+native sparse deterministic reduction in stencil-route then particle-slot order;
+the transfer identity records that order. Cochain current uses the same
+`SplatExecutionPolicy.accumulation` as its endpoint charge transfer (default:
+`"deterministic"`), rather than replacing that policy with atomic sums. Explicit
+`"fast"` cochain accumulation permits nondeterministic GPU summation: exact checkpoint
+transport still holds, but bitwise future trajectories are not promised in that mode.
+The restart class describes the topology relation, not a change to the run's selected
+arithmetic policy. RNG addressing and identity allocation are unchanged.
+
+Its decomposition may change only at restart: a different admitted mesh
 repartitions particles, with their slot-aligned process state, into new slot blocks and
 process banks by position. Slot permutations keep restored state exact, while the
 continued run is a `"tolerance"` restart within `repartition_tolerance` because
@@ -808,6 +819,26 @@ the full distributed spectral `execution_id`, including topology, layouts, stage
 payload admission, and FFT resources. A changed PSATD topology is refused rather than
 treated as a topology-neutral numerical checkpoint. Every route still admits a
 component only through the same scientific owner identity.
+
+### Measured H100 reduced-field execution
+
+`python -m benchmarks.pic_distributed --routes reduced-slabs --parts 1 2 4`
+was exercised on four H100 80GB HBM3 GPUs with JAX/JAXlib 0.11.2, CUDA
+13.4.92, driver 580.126.09, and explicit `NCCL_NVLS_ENABLE=0`. The bounded
+campaign used 16 cells and 128 slots per species per part, packet capacity
+32, one warmup, and three synchronized repeats without competing work.
+
+| Campaign | One GPU | Two GPUs | Four GPUs |
+| --- | ---: | ---: | ---: |
+| Fixed total: 64 cells, 512 slots per species | 90.119 ms | 55.867 ms | 39.413 ms |
+| Fixed local: 16 cells, 128 slots per species | 24.682 ms | 37.669 ms | 40.734 ms |
+
+All six rows passed their physics gates. The largest strong-scaling field
+difference from the one-device reference was 1.43e-14 against a 1e-10 gate.
+`benchmarks/h100_qualification.json` retains lowering, compilation,
+first/warmed execution, compiler memory, logical state bytes, and numerical
+evidence. These small reduced-slab cases do not qualify every PIC solver,
+process combination, multi-host topology, or default NVLS deployment.
 
 ## Differentiation and limits
 

@@ -24,8 +24,9 @@ warm step execution, compiler memory, migration counts, the local-guarded
 stencil-truncation evidence, and, for strong scaling, the largest field
 difference from the one-device run (reduction-order roundoff).
 
-Run with forced host devices, e.g.
-``XLA_FLAGS=--xla_force_host_platform_device_count=8 python benchmarks/pic_distributed.py``.
+Run on the visible accelerator devices. For CPU-only functional coverage use
+``JAX_NUM_CPU_DEVICES=8 python -m benchmarks.pic_distributed``; forced host
+devices do not establish GPU performance.
 """
 
 from __future__ import annotations
@@ -40,16 +41,16 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-from _runtime import (
+from jax.sharding import Mesh
+
+import phydrax as phx
+from benchmarks._runtime import (
     capture_environment,
     compiler_evidence,
     logical_array_bytes,
     measure_lower_and_compile,
     measure_repeated,
 )
-from jax.sharding import Mesh
-
-import phydrax as phx
 
 
 _D = phx.discretization
@@ -190,7 +191,7 @@ def _case(
     )
     capacity = slots * scale
     base, species, dimension, lengths = _base(route, grid_shape, cells, capacity, mesh)
-    solver = phx.solver.DistributedPICFieldSolver(base, mesh)
+    solver = phx.solver.distribute_pic_field_solver(base, mesh)
     # Local-guarded PSATD keeps Gauss's law to its stencil truncation.
     tolerance = {"constraint_tolerance": 1e-2} if route.endswith("guarded-blocks") else {}
     pic = phx.solver.ElectromagneticPICPlan(solver, species=species, **tolerance)

@@ -48,6 +48,8 @@ build/
 site/
 _gitignore/
 benchmarks/*
+# Physical four-H100 deployment and phase-separated qualification evidence.
+!benchmarks/h100_qualification.json
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py

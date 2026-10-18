@@ -347,15 +347,16 @@ def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation() -> No
         np.testing.assert_allclose(actual, expected)
 
 
-@pytest.mark.skipif(
-    len(jax.devices()) < 2,
-    reason="requires at least two JAX devices",
-)
-def test_real_two_device_fill_patch_and_reverse_match_serial_routes() -> None:
+@pytest.mark.parametrize("device_count", [2, 4], ids=["two-devices", "four-devices"])
+def test_distributed_fill_patch_and_reverse_match_serial_routes(
+    device_count: int,
+) -> None:
+    if len(jax.devices()) < device_count:
+        pytest.skip(f"Requires {device_count} JAX devices.")
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
-    group = _execution_group(jax.devices()[:2])
-    fd, prepared = _prepare(hierarchy, compiled, 2, group=group)
+    group = _execution_group(jax.devices()[:device_count])
+    fd, prepared = _prepare(hierarchy, compiled, device_count, group=group)
     state = _state(compiled.topology, fd)
 
     serial = prepared.serial_fill_patch(state)

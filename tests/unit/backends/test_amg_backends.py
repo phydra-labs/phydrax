@@ -3,6 +3,9 @@
 #
 
 
+import json
+import os
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -394,10 +397,6 @@ def test_amgx_float32_promotion_is_recorded(native_amgx: None) -> None:
 
 @pytest.mark.cuda_native
 def test_amgx_cuda13_classical_amg_pr386_regression(native_amgx: None) -> None:
-    from phydrax._cuda_native import load_cuda_component
-
-    if load_cuda_component("amgx").major != 13:
-        pytest.skip("Classical AMG PR #386 regression requires the CUDA 13 companion")
     problem, matrix, rhs = _poisson_problem(operator_id="amgx-classical-cuda13")
     policy = amg.AmgXPolicy(
         {
@@ -470,6 +469,8 @@ def test_amgx_arrays_on_nondefault_gpu(native_amgx: None) -> None:
     from phydrax._jax_config import default_device
 
     devices = tuple(device for device in jax.devices() if device.platform == "gpu")
+    count = int(os.environ.get("PHYDRAX_CUDA_QUALIFICATION_GPUS", len(devices)))
+    devices = devices[:count]
     if len(devices) < 2:
         pytest.skip("Non-default GPU AmgX qualification requires at least two GPUs")
     device = devices[1]
@@ -511,21 +512,46 @@ def test_amgx_release_is_idempotent_and_preparation_rebuilds(
 
 
 @pytest.mark.cuda_native
-def test_amgx_same_plan_isolated_across_two_devices(native_amgx: None) -> None:
+def test_amgx_same_plan_isolated_across_selected_devices(
+    native_amgx: None, record_property: Callable[[str, object], None]
+) -> None:
     from phydrax._jax_config import default_device
 
-    devices = jax.devices("gpu")[:2]
-    if len(devices) < 2:
-        pytest.skip("Same-plan AmgX qualification requires two CUDA devices")
+    visible = jax.devices("gpu")
+    count = int(os.environ.get("PHYDRAX_CUDA_QUALIFICATION_GPUS", len(visible)))
+    assert 0 < count <= len(visible), (
+        "Required AmgX qualification devices are unavailable"
+    )
+    devices = visible[:count]
     prepared: list[amg.PreparedAmgX] = []
+    alternatives: list[amg.PreparedAmgX] = []
     matrices: list[jax.Array] = []
     forcings: list[jax.Array] = []
+    problems: list[Any] = []
     policy = amg.AmgXPolicy(hierarchy_cache_capacity=1)
+    solve = eqx.filter_jit(amg.solve_amgx)
+
+    def check(index: int, item: amg.PreparedAmgX, scale: int = 1) -> int:
+        with default_device(devices[index]):
+            result = solve(item, forcings[index])
+            _assert_dense_parity(result, matrices[index] * scale, forcings[index])
+            assert result.value.devices() == {devices[index]}
+            assert result.diagnostics.native_rebuilds is not None
+            return int(result.diagnostics.native_rebuilds)
+
+    def partitions() -> list[Any]:
+        jax.effects_barrier()
+        return [
+            entry
+            for entry in phx.backends.cuda_native_resources().partitions
+            if entry.component == "amgx" and entry.partition == prepared[0].partition
+        ]
+
     try:
         for index, device in enumerate(devices):
             with default_device(device):
                 problem, matrix, rhs = _poisson_problem(
-                    operator_id="amgx-same-plan-two-devices"
+                    operator_id="amgx-same-plan-selected-devices"
                 )
                 scale = index + 1
                 problem = eqx.tree_at(
@@ -534,31 +560,58 @@ def test_amgx_same_plan_isolated_across_two_devices(native_amgx: None) -> None:
                     problem.operator.coefficients * scale,
                 )
                 matrices.append(matrix * scale)
+                problems.append(problem)
                 forcings.append(rhs)
                 prepared.append(amg.prepare_amgx(problem, amg.plan_amgx(problem, policy)))
-        assert prepared[0].plan.plan_id == prepared[1].plan.plan_id
-        for index, device in enumerate(devices):
-            with default_device(device):
-                result = eqx.filter_jit(amg.solve_amgx)(prepared[index], forcings[index])
-                _assert_dense_parity(result, matrices[index], forcings[index])
-                assert result.value.devices() == {device}
-                assert result.diagnostics.native_rebuilds is not None
-                assert int(result.diagnostics.native_rebuilds) == 0
-        partitions = [
-            entry
-            for entry in phx.backends.cuda_native_resources().partitions
-            if entry.component == "amgx" and entry.partition == prepared[0].partition
-        ]
-        assert {(entry.device, entry.live, entry.capacity) for entry in partitions} == {
+        assert len({item.plan.plan_id for item in prepared}) == 1
+        assert len({item.prepared_id for item in prepared}) == 1
+        assert [check(index, item) for index, item in enumerate(prepared)] == [0] * count
+        assert {(entry.device, entry.live, entry.capacity) for entry in partitions()} == {
             (device.id, 1, 1) for device in devices
         }
-        amg.release_amgx(prepared[0])
-        with default_device(devices[1]):
-            result = amg.solve_amgx(prepared[1], forcings[1])
-            _assert_dense_parity(result, matrices[1], forcings[1])
-            assert result.diagnostics.native_rebuilds is not None
-            assert int(result.diagnostics.native_rebuilds) == 0
+        # AmgX remains serialized. Device-local release must not invalidate peers.
+        for released in range(count):
+            with default_device(devices[released]):
+                amg.release_amgx(prepared[released])
+                amg.release_amgx(prepared[released])
+            assert {entry.device for entry in partitions()} == {
+                device.id for index, device in enumerate(devices) if index != released
+            }
+            assert [check(index, item) for index, item in enumerate(prepared)] == [
+                int(index == released) for index in range(count)
+            ]
+            # Read-only rebuilds intentionally never resurrect an immutable ID.
+            with default_device(devices[released]):
+                prepared[released] = amg.prepare_amgx(
+                    problems[released], prepared[released].plan
+                )
+        for index, device in enumerate(devices):
+            with default_device(device):
+                problem, _, _ = _poisson_problem(
+                    operator_id="amgx-same-plan-selected-devices"
+                )
+                changed = eqx.tree_at(
+                    lambda item: item.operator.coefficients,
+                    problem,
+                    problem.operator.coefficients * (2 * (index + 1)),
+                )
+                alternatives.append(amg.prepare_amgx(changed, prepared[index].plan))
+        assert {item.plan.plan_id for item in (*prepared, *alternatives)} == {
+            prepared[0].plan.plan_id
+        }
+        for items, scale in ((prepared, 1), (alternatives, 2)) * 3:
+            assert [check(index, item, scale) for index, item in enumerate(items)] == [
+                1
+            ] * count
+            assert {
+                (entry.device, entry.live, entry.capacity) for entry in partitions()
+            } == {(device.id, 1, 1) for device in devices}
+        # Re-own each capacity-one partition, evicting anonymous read-rebuild memos.
+        for index, device in enumerate(devices):
+            with default_device(device):
+                prepared[index] = amg.prepare_amgx(problems[index], prepared[index].plan)
     finally:
-        for item in prepared:
+        for item in (*prepared, *alternatives):
             amg.release_amgx(item)
-    assert _amgx_live_count(prepared[0]) == 0
+    assert not partitions()
+    record_property("cuda_native_devices", json.dumps([device.id for device in devices]))

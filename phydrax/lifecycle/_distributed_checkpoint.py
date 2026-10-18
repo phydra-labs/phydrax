@@ -10,7 +10,7 @@ import hashlib
 import io
 import json
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -245,6 +245,25 @@ class ProcessCheckpointPublication:
     shards: tuple[CheckpointShard, ...]
 
 
+def _local_checkpoint_buffers(
+    leaf: jax.Array,
+    indices: Mapping[jax.Device, CanonicalIndex],
+) -> Iterator[tuple[jax.Device, int, jax.Array]]:
+    local_devices = leaf.sharding.addressable_devices
+    if leaf.is_fully_replicated and len(local_devices) == 1:
+        # JAX 0.11.2 can expose a globally sharded self-view through
+        # addressable_shards when one local buffer holds a complete replica.
+        # Its public addressable_data API supplies the correct local view.
+        # Global map order preserves JAX's replica numbering.
+        for replica_id, device in enumerate(indices):
+            if device in local_devices:
+                yield device, replica_id, leaf.addressable_data(0)
+                return
+        raise ValueError("A local checkpoint replica has no global device index.")
+    for shard in leaf.addressable_shards:
+        yield shard.device, shard.replica_id, shard.data
+
+
 def snapshot_addressable_arrays(
     tree: Any,
     /,
@@ -258,7 +277,7 @@ def snapshot_addressable_arrays(
         raise ValueError("topology_epoch must be a non-negative integer")
     if not isinstance(limits, ArrayArchiveLimits):
         raise TypeError("limits must be an ArrayArchiveLimits instance")
-    pending: list[tuple[str, jax.Array, Any, CanonicalIndex]] = []
+    pending: list[tuple[str, jax.Array, jax.Device, int, jax.Array, CanonicalIndex]] = []
     total_bytes = 0
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
         if not isinstance(leaf, jax.Array):
@@ -275,26 +294,29 @@ def snapshot_addressable_arrays(
         if total_bytes > limits.max_aggregate_bytes - byte_count:
             raise ValueError("Checkpoint arrays exceed the aggregate byte limit.")
         total_bytes += byte_count
+        indices = {
+            device: _canonical_index(index, shape)
+            for device, index in leaf.sharding.devices_indices_map(shape).items()
+        }
         ownership: dict[CanonicalIndex, tuple[int, int]] = {}
-        for device, index in leaf.sharding.devices_indices_map(shape).items():
-            normalized = _canonical_index(index, shape)
+        for device, normalized in indices.items():
             key = (int(device.process_index), int(device.id))
             previous = ownership.get(normalized)
             if previous is None or key < previous:
                 ownership[normalized] = key
-        for shard in leaf.addressable_shards:
-            normalized = _canonical_index(shard.index, shape)
-            device_key = (int(shard.device.process_index), int(shard.device.id))
+        for device, replica_id, data in _local_checkpoint_buffers(leaf, indices):
+            normalized = indices[device]
+            device_key = (int(device.process_index), int(device.id))
             if ownership[normalized] != device_key:
                 continue
             if len(pending) >= limits.max_members:
                 raise ValueError("Checkpoint exceeds the shard-count limit.")
-            shard.data.copy_to_host_async()
-            pending.append((array_path, leaf, shard, normalized))
+            data.copy_to_host_async()
+            pending.append((array_path, leaf, device, replica_id, data, normalized))
 
     snapshots: list[AddressableCheckpointShard] = []
-    for array_path, leaf, shard, index in pending:
-        payload = np.asarray(shard.data)
+    for array_path, leaf, device, replica_id, data, index in pending:
+        payload = np.asarray(data)
         local_shape = tuple(stop - start for start, stop, _ in index)
         if (
             payload.shape != local_shape
@@ -308,9 +330,9 @@ def snapshot_addressable_arrays(
                 "global_shape": list(leaf.shape),
                 "dtype": np.dtype(leaf.dtype).str,
                 "index": [list(entry) for entry in index],
-                "process_index": int(shard.device.process_index),
-                "device_id": int(shard.device.id),
-                "replica_id": int(shard.replica_id),
+                "process_index": int(device.process_index),
+                "device_id": int(device.id),
+                "replica_id": int(replica_id),
                 "topology_epoch": topology_epoch,
             }
         )
@@ -320,9 +342,9 @@ def snapshot_addressable_arrays(
                 global_shape=tuple(leaf.shape),
                 dtype=np.dtype(leaf.dtype).str,
                 index=index,
-                process_index=int(shard.device.process_index),
-                device_id=int(shard.device.id),
-                replica_id=int(shard.replica_id),
+                process_index=int(device.process_index),
+                device_id=int(device.id),
+                replica_id=int(replica_id),
                 payload=payload,
                 layout_id=layout_id,
             )

@@ -69,20 +69,20 @@ _SETTINGS: dict[CudaNativeComponentName, LibrarySetting] = {
 }
 # Explicit family -> wheel names; math-library versions do not encode toolkit major.
 _NVIDIA_DISTRIBUTIONS = {
-    "cudart": ("nvidia-cuda-runtime-cu12", "nvidia-cuda-runtime"),
-    "cublas": ("nvidia-cublas-cu12", "nvidia-cublas"),
-    "cublasLt": ("nvidia-cublas-cu12", "nvidia-cublas"),
-    "cusparse": ("nvidia-cusparse-cu12", "nvidia-cusparse"),
-    "cusolver": ("nvidia-cusolver-cu12", "nvidia-cusolver"),
-    "cufft": ("nvidia-cufft-cu12", "nvidia-cufft"),
-    "curand": ("nvidia-curand-cu12", "nvidia-curand"),
-    "nvJitLink": ("nvidia-nvjitlink-cu12", "nvidia-nvjitlink"),
-    "nvrtc": ("nvidia-cuda-nvrtc-cu12", "nvidia-cuda-nvrtc"),
-    "cupti": ("nvidia-cuda-cupti-cu12", "nvidia-cuda-cupti"),
-    "cudnn": ("nvidia-cudnn-cu12", "nvidia-cudnn-cu13"),
-    "nccl": ("nvidia-nccl-cu12", "nvidia-nccl-cu13"),
-    "nvshmem_host": ("nvidia-nvshmem-cu12", "nvidia-nvshmem-cu13"),
-    "cudss": ("nvidia-cudss-cu12", "nvidia-cudss-cu13"),
+    "cudart": "nvidia-cuda-runtime",
+    "cublas": "nvidia-cublas",
+    "cublasLt": "nvidia-cublas",
+    "cusparse": "nvidia-cusparse",
+    "cusolver": "nvidia-cusolver",
+    "cufft": "nvidia-cufft",
+    "curand": "nvidia-curand",
+    "nvJitLink": "nvidia-nvjitlink",
+    "nvrtc": "nvidia-cuda-nvrtc",
+    "cupti": "nvidia-cuda-cupti",
+    "cudnn": "nvidia-cudnn-cu13",
+    "nccl": "nvidia-nccl-cu13",
+    "nvshmem_host": "nvidia-nvshmem-cu13",
+    "cudss": "nvidia-cudss-cu13",
 }
 _CUDA_SONAME = re.compile(
     r"lib(cudart|cublasLt|cublas|cusparse|cusolver|cufft|curand|nvJitLink|nvrtc|cupti|cudnn[^/]*|nccl|nvshmem_host|cudss)\.so(?:\.\d+)*\Z"
@@ -166,14 +166,12 @@ def _refuse(code: CudaIssueCode, message: str, *paths: str) -> CudaNativeUnavail
     )
 
 
-def _reinstall(major: int) -> str:
-    return (
-        f'Reinstall with pip install --upgrade --force-reinstall "phydrax[cuda{major}]".'
-    )
+def _reinstall() -> str:
+    return 'Reinstall with pip install --upgrade --force-reinstall "phydrax[cuda13]".'
 
 
 @functools.cache
-def _library_location(name: CudaNativeComponentName, configured: str, major: int) -> Path:
+def _library_location(name: CudaNativeComponentName, configured: str) -> Path:
     setting = LIBRARY_ENVIRONMENT[_SETTINGS[name]]
     if configured:
         path = Path(configured).expanduser().resolve()
@@ -184,23 +182,26 @@ def _library_location(name: CudaNativeComponentName, configured: str, major: int
                 str(path),
             )
         return path
-    module = f"phydrax_cuda{major}"
+    module = "phydrax_cuda13"
     if importlib.util.find_spec(module) is None:
         raise _refuse(
             "companion-missing",
-            f"CUDA companion phydrax-cuda{major} is missing; install phydrax[cuda{major}].",
+            "CUDA companion phydrax-cuda13 is missing; install phydrax[cuda13].",
         )
     try:
         return Path(importlib.import_module(module).component_library(name)).resolve()
     except (OSError, ValueError) as error:
         raise _refuse(
             "companion-missing",
-            f"CUDA {name} companion is missing: {error}. {_reinstall(major)}",
+            f"CUDA {name} companion is missing: {error}. {_reinstall()}",
         ) from error
 
 
 def _cuda_facts() -> CudaEnvironmentFacts:
     facts = collect_cuda_environment(initialize_backend=False)
+    for issue in assess_cuda_environment(facts).issues:
+        if issue.severity == "error":
+            raise CudaNativeUnavailableError(issue)
     # JAX owns its wheel preloads and must initialize before any companion dlopen.
     try:
         devices = jax.local_devices()
@@ -223,44 +224,40 @@ def _cuda_facts() -> CudaEnvironmentFacts:
                 raise CudaNativeUnavailableError(issue)
         raise _refuse(
             "backend-unavailable",
-            "No JAX CUDA device is available; enable the CUDA JAX platform and install the matching phydrax[cuda12] or phydrax[cuda13] extra.",
+            "No JAX CUDA device is available; enable the CUDA JAX platform and install phydrax[cuda13].",
         )
-    for issue in assess_cuda_environment(facts).issues:
-        if issue.severity == "error":
-            raise CudaNativeUnavailableError(issue)
     if len(facts.plugin_majors) != 1:
         raise _refuse(
             "no-cuda-plugin",
-            "No unique JAX CUDA plugin is installed; install phydrax[cuda12] or phydrax[cuda13].",
+            "No unique JAX CUDA13 plugin is installed; install phydrax[cuda13].",
         )
     runtime = cuda_devices[0].client.platform_version
     match = re.fullmatch(r"cuda (\d+)", runtime)
-    if match is None or int(match[1]) // 1000 != facts.plugin_majors[0]:
+    if match is None or int(match[1]) // 1000 != 13:
         raise _refuse(
             "companion-major-mismatch",
-            f"JAX runtime {runtime!r} does not match plugin CUDA {facts.plugin_majors[0]}. {_reinstall(facts.plugin_majors[0])}",
+            f"JAX runtime {runtime!r} does not match CUDA 13. {_reinstall()}",
         )
     return facts
 
 
-def _missing_dependency(soname: str, major: int, path: str) -> CudaNativeUnavailableError:
+def _missing_dependency(soname: str, path: str) -> CudaNativeUnavailableError:
     match = _CUDA_SONAME.fullmatch(soname)
     if match is None:
         raise ValueError(f"Not a CUDA-family soname: {soname}.")
     family = "cudnn" if match[1].startswith("cudnn") else match[1]
-    distribution = _NVIDIA_DISTRIBUTIONS[family][major - 12]
+    distribution = _NVIDIA_DISTRIBUTIONS[family]
     return _refuse(
         "native-dependency-missing",
-        f"CUDA dependency {soname}, requested by {path}, is absent from the CUDA {major} NVIDIA wheels; install or reinstall {distribution}. {_reinstall(major)}",
+        f"CUDA dependency {soname}, requested by {path}, is absent from the CUDA 13 NVIDIA wheels; install or reinstall {distribution}. {_reinstall()}",
         path,
     )
 
 
 def _dependency_paths(path: Path, facts: CudaEnvironmentFacts) -> tuple[str, ...]:
-    major = facts.plugin_majors[0]
     wheels: dict[str, str] = {}
     for filename, owner_major in facts.wheel_library_majors:
-        if owner_major != major or _CUDA_SONAME.fullmatch(Path(filename).name) is None:
+        if owner_major != 13 or _CUDA_SONAME.fullmatch(Path(filename).name) is None:
             continue
         candidate = Path(filename)
         if candidate.is_file():
@@ -281,7 +278,7 @@ def _dependency_paths(path: Path, facts: CudaEnvironmentFacts) -> tuple[str, ...
         # transitive dependencies and misidentify the distribution to reinstall.
         for soname in read_dynamic_section(filename).needed:
             if _CUDA_SONAME.fullmatch(soname) is not None and soname not in wheels:
-                raise _missing_dependency(soname, major, filename)
+                raise _missing_dependency(soname, filename)
         closure = resolve_dependency_closure(
             filename, library_path=(), executable=sys.executable, preloaded=seeds
         )
@@ -290,9 +287,7 @@ def _dependency_paths(path: Path, facts: CudaEnvironmentFacts) -> tuple[str, ...
                 continue
             wheel = wheels.get(dependency.soname)
             if wheel is None:
-                raise _missing_dependency(
-                    dependency.soname, major, dependency.requested_by
-                )
+                raise _missing_dependency(dependency.soname, dependency.requested_by)
             visit(wheel)
         if filename != str(path):
             ordered.append(filename)
@@ -301,7 +296,7 @@ def _dependency_paths(path: Path, facts: CudaEnvironmentFacts) -> tuple[str, ...
     return tuple(ordered)
 
 
-def _identity_text(function: Any, symbol: str, path: Path, major: int) -> str:
+def _identity_text(function: Any, symbol: str, path: Path) -> str:
     raw = function()
     if isinstance(raw, bytes):
         try:
@@ -312,7 +307,7 @@ def _identity_text(function: Any, symbol: str, path: Path, major: int) -> str:
             return text
     raise _refuse(
         "companion-invalid",
-        f"Companion {path} has invalid {symbol}. {_reinstall(major)}",
+        f"Companion {path} has invalid {symbol}. {_reinstall()}",
         str(path),
     )
 
@@ -321,7 +316,6 @@ def _bind(
     library: ctypes.CDLL,
     path: Path,
     name: CudaNativeComponentName,
-    major: int,
     preloaded: tuple[str, ...],
 ) -> tuple[CudaNativeComponent, dict[str, Any], tuple[tuple[str, int], ...]]:
     functions: dict[str, Any] = {}
@@ -331,42 +325,40 @@ def _bind(
         except AttributeError as error:
             raise _refuse(
                 "companion-invalid",
-                f"Companion {path} lacks C ABI symbol {symbol}. {_reinstall(major)}",
+                f"Companion {path} lacks C ABI symbol {symbol}. {_reinstall()}",
                 str(path),
             ) from error
         function.restype = restype
         function.argtypes = argtypes
         functions[symbol] = function
-    version = _identity_text(functions["phx_cuda_version"], "version", path, major)
+    version = _identity_text(functions["phx_cuda_version"], "version", path)
     try:
         required = importlib.metadata.version("phydrax")
     except importlib.metadata.PackageNotFoundError as error:
         raise _refuse(
             "companion-invalid",
-            f"Cannot verify companion {path}: phydrax distribution metadata is missing. {_reinstall(major)}",
+            f"Cannot verify companion {path}: phydrax distribution metadata is missing. {_reinstall()}",
             str(path),
         ) from error
     if version != required:
         raise _refuse(
             "companion-version-mismatch",
-            f"Companion {path} is release {version}; phydrax {required} requires phydrax-cuda{major}=={required}. {_reinstall(major)}",
+            f"Companion {path} is release {version}; phydrax {required} requires phydrax-cuda13=={required}. {_reinstall()}",
             str(path),
         )
     native_major = functions["phx_cuda_major"]()
-    if native_major != major:
+    if native_major != 13:
         raise _refuse(
             "companion-major-mismatch",
-            f"Companion {path} uses CUDA {native_major}, but JAX uses CUDA {major}. {_reinstall(major)}",
+            f"Companion {path} uses CUDA {native_major}, but Phydrax requires CUDA 13. {_reinstall()}",
             str(path),
         )
-    component = _identity_text(functions["phx_cuda_component"], "component", path, major)
-    build_hash = _identity_text(
-        functions["phx_cuda_build_hash"], "build hash", path, major
-    )
+    component = _identity_text(functions["phx_cuda_component"], "component", path)
+    build_hash = _identity_text(functions["phx_cuda_build_hash"], "build hash", path)
     if component != name or re.fullmatch(r"[0-9a-f]{64}", build_hash) is None:
         raise _refuse(
             "companion-invalid",
-            f"Companion {path} has invalid identity (component {component!r}, build hash {build_hash!r}); expected {name}. {_reinstall(major)}",
+            f"Companion {path} has invalid identity (component {component!r}, build hash {build_hash!r}); expected {name}. {_reinstall()}",
             str(path),
         )
     count = functions["phx_cuda_handler_count"]()
@@ -387,7 +379,7 @@ def _bind(
     ):
         raise _refuse(
             "companion-invalid",
-            f"Companion {path} has missing, duplicate, null, or unexpected FFI handlers; required: {', '.join(CUDA_NATIVE_HANDLERS[name])}. {_reinstall(major)}",
+            f"Companion {path} has missing, duplicate, null, or unexpected FFI handlers; required: {', '.join(CUDA_NATIVE_HANDLERS[name])}. {_reinstall()}",
             str(path),
         )
     for target, _ in handlers:
@@ -396,7 +388,7 @@ def _bind(
         except AttributeError as error:
             raise _refuse(
                 "companion-invalid",
-                f"Companion {path} lacks exported FFI handler {target}. {_reinstall(major)}",
+                f"Companion {path} lacks exported FFI handler {target}. {_reinstall()}",
                 str(path),
             ) from error
     return (
@@ -405,7 +397,7 @@ def _bind(
             path=str(path),
             version=version,
             build_hash=build_hash,
-            major=major,
+            major=13,
             preloaded=preloaded,
         ),
         functions,
@@ -421,8 +413,7 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
         if name in _LOADED:
             return _LOADED[name].identity
         facts = _cuda_facts()
-        major = facts.plugin_majors[0]
-        path = _library_location(name, library_input(_SETTINGS[name]), major)
+        path = _library_location(name, library_input(_SETTINGS[name]))
         try:
             preloaded = _dependency_paths(path, facts)
             dependencies = tuple(ctypes.CDLL(filename) for filename in preloaded)
@@ -430,10 +421,10 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
         except (OSError, ValueError) as error:
             raise _refuse(
                 "companion-invalid",
-                f"Cannot load CUDA {name} companion {path}: {error}. {_reinstall(major)}",
+                f"Cannot load CUDA {name} companion {path}: {error}. {_reinstall()}",
                 str(path),
             ) from error
-        identity, functions, handlers = _bind(library, path, name, major, preloaded)
+        identity, functions, handlers = _bind(library, path, name, preloaded)
         for target, pointer in handlers:
             jax.ffi.register_ffi_target(
                 target, jax.ffi.pycapsule(ctypes.c_void_p(pointer)), platform="CUDA"
@@ -454,11 +445,11 @@ def cuda_component_status(
     except CudaNativeUnavailableError as error:
         return False, str(error), (error.issue,), ()
     versions = [
-        (f"phydrax-cuda{component.major}", component.version),
+        ("phydrax-cuda13", component.version),
         (f"phydrax-cuda-{component.name}", component.build_hash),
     ]
     if component.name == "cudss":
-        distribution = _NVIDIA_DISTRIBUTIONS["cudss"][component.major - 12]
+        distribution = _NVIDIA_DISTRIBUTIONS["cudss"]
         try:
             versions.append((distribution, importlib.metadata.version(distribution)))
         except importlib.metadata.PackageNotFoundError:

@@ -42,7 +42,7 @@ def _slab(
     precision: SpectralPrecisionPolicy | None = None,
     maximum_bytes: int = 2 * 1024**3,
 ) -> DistributedSpectralExecutionPlan:
-    selected = (jax.devices("cpu")[0],) if devices is None else tuple(devices)
+    selected = (jax.devices()[0],) if devices is None else tuple(devices)
     topology = SpectralMeshTopology(
         (len(selected),),
         devices=selected,
@@ -568,13 +568,12 @@ def test_rotational_dealiasing_matches_independent_reference() -> None:
     np.testing.assert_allclose(distributed, reference, rtol=3e-5, atol=3e-5)
 
 
-def test_public_transpose_and_multi_device_stage_execution_when_available() -> None:
-    devices = tuple(jax.devices("cpu"))
-    if len(devices) < 2:
-        pytest.skip(
-            "Run under --xla_force_host_platform_device_count to exercise collectives."
-        )
-    slab = _slab((8, 8, 6), devices=devices[:2])
+@pytest.mark.parametrize("device_count", [2, 4], ids=["two-devices", "four-devices"])
+def test_public_transpose_and_multi_device_slab_execution(device_count: int) -> None:
+    devices = tuple(jax.devices())
+    if len(devices) < device_count:
+        pytest.skip(f"Requires {device_count} physical or explicitly configured devices.")
+    slab = _slab((8, 8, 6), devices=devices[:device_count])
     values = (
         np.arange(8 * 8 * 6, dtype=np.float32).reshape((8, 8, 6)).astype(np.complex64)
     )
@@ -604,8 +603,11 @@ def test_public_transpose_and_multi_device_stage_execution_when_available() -> N
     rhs = slab.global_inner_product(values, reverse_probe, representation="physical")
     np.testing.assert_allclose(lhs, rhs, rtol=2e-6, atol=2e-6)
 
+
+def test_four_device_pencil_matches_independent_reference() -> None:
+    devices = tuple(jax.devices())
     if len(devices) < 4:
-        pytest.skip("Four CPU devices are required for the pencil mesh.")
+        pytest.skip("Four physical or explicitly configured devices are required.")
     topology = SpectralMeshTopology((2, 2), devices=devices[:4], axis_names=("px", "py"))
     pencil = DistributedSpectralExecutionPlan(
         topology,

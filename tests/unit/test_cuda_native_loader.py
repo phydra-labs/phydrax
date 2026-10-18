@@ -127,6 +127,34 @@ def _override(monkeypatch: pytest.MonkeyPatch, library: Path) -> None:
     monkeypatch.setenv("PHYDRAX_CUDA_CUDSS_LIBRARY", str(library))
 
 
+@pytest.mark.parametrize("major", [11, 12, 14])
+@pytest.mark.parametrize("platforms", [None, ("cpu",)])
+def test_unsupported_plugin_refuses_before_backend_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+    major: int,
+    platforms: tuple[str, ...] | None,
+) -> None:
+    facts = CudaEnvironmentFacts(
+        host_platform="linux",
+        host_machine="x86_64",
+        plugin_majors=(major,),
+        selected_platforms=platforms,
+    )
+    monkeypatch.setattr(native, "_LOADED", {})
+    monkeypatch.setattr(
+        native, "collect_cuda_environment", lambda *, initialize_backend: facts
+    )
+
+    def forbidden_devices() -> list[jax.Device]:
+        raise AssertionError("An unsupported plugin must not initialize the backend.")
+
+    monkeypatch.setattr(jax, "local_devices", forbidden_devices)
+    with pytest.raises(native.CudaNativeUnavailableError) as error:
+        native.load_cuda_component("cudss")
+    assert error.value.issue.code == "plugin-major-mismatch"
+    assert error.value.issue.severity == "error"
+
+
 def test_missing_companion_names_matching_extra(
     isolated_loader: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -219,6 +247,7 @@ def test_registration_is_idempotent(
     assert len(isolated_loader) == 11
     assert len(set(isolated_loader)) == 11
     assert first.path == str(library)
+    assert first.major == 13
     assert native.release_cuda_entries("cudss", 1, (1, 1, 0)) == 0
     resources = native.cuda_native_resources()
     assert resources.components == (first,)
@@ -303,7 +332,7 @@ def test_traced_eager_release_names_traced_target() -> None:
         )
 
 
-def test_cpu_only_process_never_loads_companion(tmp_path: Path) -> None:
+def test_cpu_selected_process_never_loads_companion(tmp_path: Path) -> None:
     library = _compile_library(tmp_path)
     source = """
 import ctypes
@@ -316,7 +345,7 @@ def load(path, *args, **kwargs):
 ctypes.CDLL = load
 available, reason, issues, versions = cuda_component_status("cudss")
 assert not available, reason
-assert "No JAX CUDA device" in reason, reason
+assert issues and all(issue.severity == "error" for issue in issues), issues
 assert not any("libfixture" in path for path in calls), calls
 """
     result = subprocess.run(
@@ -345,7 +374,7 @@ try:
 except CudaNativeUnavailableError as error:
     print(str(error))
     raise SystemExit(77)
-assert component.major in (12, 13)
+assert component.major == 13
 assert component.path.startswith("/")
 assert load_cuda_component({component!r}) is component
 print(component)

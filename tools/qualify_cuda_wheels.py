@@ -2,13 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Qualify a CUDA companion release in a clean environment on a real GPU.
+"""Qualify the CUDA 13 companion release in a clean environment on a real GPU.
 
-The tool installs ``phydrax[cudaNN]`` from a built Phydrax wheel plus a wheelhouse
+The tool installs ``phydrax[cuda13]`` from a built Phydrax wheel plus a wheelhouse
 holding the companion and CUDA-major marker wheels (until they are published),
-runs the companion provider tests against the installed packages, audits the
-CUDA libraries mapped by a process that loaded every component (normally and
-under a hostile ``LD_LIBRARY_PATH``), and writes JSON evidence.
+runs the companion provider tests against the installed packages on exactly the
+first ``--required-gpus`` visible devices, audits the CUDA libraries mapped by a
+process that loaded every component (normally and under a hostile
+``LD_LIBRARY_PATH``), and writes JSON evidence. Required provider and teardown
+cases must pass and report every selected device; visibility alone is insufficient.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from datetime import datetime, UTC
 from email.parser import BytesParser
 from pathlib import Path
 from typing import TypedDict
+from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,9 +44,20 @@ TESTS = (
 # Test-runner requirements are taken from the wheel's own ``tests`` extra.
 TEST_RUNNERS = ("pytest", "pytest-xdist", "hypothesis")
 DEFAULT_HOSTILE_LIBRARY_PATH = "/usr/local/cuda/lib64"
+DEVICE_COVERAGE_TESTS = (
+    "test_cudss_same_plan_isolated_across_selected_devices[serial]",
+    "test_cudss_same_plan_isolated_across_selected_devices[simultaneous]",
+    "test_amgx_same_plan_isolated_across_selected_devices",
+    "test_quda_independent_process_on_each_selected_device",
+    *(
+        f"test_exit_with_live_native_state_and_inflight_work[{environment}-{component}]"
+        for environment in ("normal", "hostile-library-path")
+        for component in ("cudss", "amgx", "quda")
+    ),
+)
 
 AUDIT = """
-import json, os, sys
+import json, sys
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -51,20 +65,13 @@ import phydrax as phx
 from phydrax._cuda_native import CudaNativeUnavailableError, load_cuda_component
 from phydrax.backends import cuda_environment
 
-major = int(sys.argv[1])
-required_gpus = int(sys.argv[3])
-hostile = sys.argv[2] if len(sys.argv) > 2 else ""
+required_gpus = int(sys.argv[1])
 try:
     components = {name: load_cuda_component(name) for name in ("cudss", "amgx", "quda")}
 except CudaNativeUnavailableError as error:
-    # JAX's CUDA 12 plugin may fail under a shadowing path; the refusal must name it.
     refusal = {"code": error.issue.code, "paths": list(error.issue.paths), "message": str(error)}
-    accepted = (
-        major == 12 and hostile in error.issue.paths
-        and error.issue.code == "backend-unavailable"
-    )
-    print("AUDIT " + json.dumps({"refused": refusal, "accepted_refusal": accepted}), flush=True)
-    sys.exit(0 if accepted else 1)
+    print("AUDIT " + json.dumps({"refused": refusal}), flush=True)
+    sys.exit(1)
 devices = jax.devices("gpu")
 if len(devices) < required_gpus:
     print("AUDIT " + json.dumps({
@@ -95,7 +102,7 @@ mapped = [
 ]
 failures = [
     entry for entry in mapped
-    if entry["major"] != major or entry["path"].startswith("/usr/local/cuda")
+    if entry["major"] != 13 or entry["path"].startswith("/usr/local/cuda")
 ]
 print("AUDIT " + json.dumps({
     "residual": residual,
@@ -116,7 +123,7 @@ print("AUDIT " + json.dumps({
     "runtime_version": report.facts.runtime_version,
     "jax": jax.__version__,
 }), flush=True)
-sys.exit(0 if not failures and residual < 1e-4 else 1)
+sys.exit(0 if report.successful and not failures and residual < 1e-4 else 1)
 """
 
 
@@ -132,6 +139,8 @@ class Evidence(TypedDict):
     completed_at: str
     major: int
     required_gpus: int
+    selected_devices: list[int]
+    coverage: dict[str, list[int]]
     venv: str
     wheels: dict[str, str]
     install: list[CommandEvidence]
@@ -217,7 +226,7 @@ def clean_environment(*, library_path: str | None) -> dict[str, str]:
 
 
 def install(
-    python: Path, phydrax_wheel: Path, wheelhouse: Path, major: int, evidence: Evidence
+    python: Path, phydrax_wheel: Path, wheelhouse: Path, evidence: Evidence
 ) -> bool:
     command = [
         "uv",
@@ -232,8 +241,8 @@ def install(
         "--reinstall-package",
         "phydrax",
         "--reinstall-package",
-        f"phydrax-cuda{major}",
-        f"phydrax[cuda{major}] @ {phydrax_wheel.as_uri()}",
+        "phydrax-cuda13",
+        f"phydrax[cuda13] @ {phydrax_wheel.as_uri()}",
         *test_requirements(phydrax_wheel),
     ]
     result = run(command)
@@ -244,12 +253,68 @@ def install(
     return True
 
 
+def collect_test_coverage(path: Path, evidence: Evidence) -> None:
+    """Reject absent, skipped, or partial hardware cases, even after pytest exits 0."""
+    try:
+        suite = ElementTree.parse(path)
+    except (OSError, ElementTree.ParseError) as error:
+        evidence["errors"].append(f"Missing or invalid provider test report: {error}")
+        return
+    required = [*DEVICE_COVERAGE_TESTS, "test_quda_refuses_multiple_processes"]
+    if evidence["required_gpus"] >= 2:
+        required.append("test_quda_refuses_second_device")
+    expected = evidence["selected_devices"]
+    if len(expected) != evidence["required_gpus"] or len(set(expected)) != len(expected):
+        evidence["errors"].append("Selected CUDA topology does not match --required-gpus")
+        return
+    for name in required:
+        cases = [case for case in suite.iter("testcase") if case.get("name") == name]
+        if len(cases) != 1:
+            evidence["errors"].append(
+                f"Required native case missing or duplicated: {name}"
+            )
+            continue
+        case = cases[0]
+        if any(
+            case.find(status) is not None for status in ("skipped", "failure", "error")
+        ):
+            evidence["errors"].append(f"Required native case did not pass: {name}")
+            continue
+        if name not in DEVICE_COVERAGE_TESTS:
+            continue
+        properties = [
+            entry.get("value")
+            for entry in case.findall("properties/property")
+            if entry.get("name") == "cuda_native_devices"
+        ]
+        try:
+            covered = (
+                json.loads(properties[0])
+                if len(properties) == 1 and properties[0] is not None
+                else None
+            )
+        except (TypeError, json.JSONDecodeError):
+            covered = None
+        if (
+            not isinstance(covered, list)
+            or any(type(device) is not int for device in covered)
+            or covered != expected
+        ):
+            evidence["errors"].append(
+                f"Required device coverage missing for {name}: expected {expected}, got {covered}"
+            )
+            continue
+        evidence["coverage"][name] = covered
+
+
 def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
     # Only the test package is importable from the tree; phydrax comes from the wheel.
-    # One process owns all visible GPUs, including same-plan two-device tests.
+    # One process owns the selected topology; the cuDSS race case owns its threads.
     # xdist workers must not concurrently initialize providers on the same GPU.
     environment = clean_environment(library_path=None)
     environment["PYTHONPATH"] = str(tests_root)
+    environment["PHYDRAX_CUDA_QUALIFICATION_GPUS"] = str(evidence["required_gpus"])
+    report_path = tests_root / "native-provider-results.xml"
     result = run(
         [
             str(python),
@@ -261,6 +326,10 @@ def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
             "-rs",
             "-n",
             "0",
+            "--junitxml",
+            str(report_path),
+            "-o",
+            "junit_family=legacy",
             "--rootdir",
             str(ROOT),
             "-c",
@@ -273,9 +342,10 @@ def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
     evidence["tests"] = result
     if result["returncode"]:
         evidence["errors"].append("Companion provider tests failed")
+    collect_test_coverage(report_path, evidence)
     skipped = re.findall(r"^SKIPPED .*$", result["stdout"], flags=re.MULTILINE)
-    # Every loader refusal text names the phydrax[cudaNN] remedy.
-    unavailable = [line for line in skipped if "phydrax[cuda" in line.lower()]
+    # Every loader refusal text names the phydrax[cuda13] remedy.
+    unavailable = [line for line in skipped if "phydrax[cuda13]" in line.lower()]
     if unavailable:
         evidence["errors"].append(
             f"Companion tests skipped as unavailable in a qualification run: {unavailable}"
@@ -284,7 +354,9 @@ def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
         hardware_skips = [
             line
             for line in skipped
-            if re.search(r"two (?:CUDA devices|GPUs)", line, flags=re.IGNORECASE)
+            if re.search(
+                r"two (?:selected )?(?:CUDA devices|GPUs)", line, flags=re.IGNORECASE
+            )
         ]
         if hardware_skips:
             evidence["errors"].append(
@@ -294,7 +366,6 @@ def run_tests(python: Path, tests_root: Path, evidence: Evidence) -> None:
 
 def audit(
     python: Path,
-    major: int,
     label: str,
     library_path: str | None,
     evidence: Evidence,
@@ -304,8 +375,6 @@ def audit(
             str(python),
             "-c",
             AUDIT,
-            str(major),
-            library_path or "",
             str(evidence["required_gpus"]),
         ],
         environment=clean_environment(library_path=library_path),
@@ -321,17 +390,20 @@ def audit(
     }
     if result["returncode"] or report is None:
         evidence["errors"].append(f"Mapped-library audit {label!r} failed")
+    elif label == "clean" and isinstance(report, dict):
+        evidence["selected_devices"] = [
+            device["id"] for device in report["devices"][: evidence["required_gpus"]]
+        ]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--major", type=int, choices=(12, 13), required=True)
     parser.add_argument("--venv", type=Path, required=True, help="Qualification venv")
     parser.add_argument(
         "--required-gpus",
         type=int,
         default=1,
-        help="Minimum visible CUDA devices; use 2 to require two-device qualification.",
+        help="Exercise the first N visible CUDA devices in every required provider/lifecycle case.",
     )
     parser.add_argument(
         "--reuse-venv",
@@ -361,15 +433,16 @@ def main() -> int:
     args = parser.parse_args()
     if args.required_gpus < 1:
         parser.error("--required-gpus must be positive")
-    major: int = args.major
     venv: Path = args.venv.resolve()
     phydrax_wheel: Path = args.phydrax_wheel.resolve()
     wheelhouse: Path = args.wheelhouse.resolve()
     evidence: Evidence = {
         "timestamp": datetime.now(UTC).isoformat(),
         "completed_at": "",
-        "major": major,
+        "major": 13,
         "required_gpus": args.required_gpus,
+        "selected_devices": [],
+        "coverage": {},
         "venv": str(venv),
         "wheels": {
             path.name: sha256(path)
@@ -391,17 +464,15 @@ def main() -> int:
             evidence["install"].append(created)
             if created["returncode"]:
                 evidence["errors"].append(f"venv creation failed: {created['stderr']}")
-    if not evidence["errors"] and install(
-        python, phydrax_wheel, wheelhouse, major, evidence
-    ):
+    if not evidence["errors"] and install(python, phydrax_wheel, wheelhouse, evidence):
         # Gate hardware availability before tests can skip.
-        audit(python, major, "clean", None, evidence)
+        audit(python, "clean", None, evidence)
     if not evidence["errors"]:
         with tempfile.TemporaryDirectory(prefix="phydrax-cuda-qualify-") as scratch:
             tests_root = Path(scratch)
             (tests_root / "tests").symlink_to(ROOT / "tests", target_is_directory=True)
             run_tests(python, tests_root, evidence)
-        audit(python, major, "hostile", args.hostile_library_path, evidence)
+        audit(python, "hostile", args.hostile_library_path, evidence)
         if args.extras_gate_work_dir is not None:
             gate = run(
                 [
