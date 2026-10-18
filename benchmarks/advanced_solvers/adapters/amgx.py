@@ -50,7 +50,7 @@ class AmgxAdapter(BenchmarkAdapter):
     """Phydrax public AmgX lifecycle with the canonical FGMRES+AMG policy."""
 
     name = "amgx"
-    dependency = "phydrax+phydrax-cuda12-or-phydrax-cuda13+CUDA"
+    dependency = "phydrax+phydrax-cuda13+CUDA"
     capabilities = _CAPABILITIES
 
     def availability(self, capability: str, /) -> Availability:
@@ -67,14 +67,7 @@ class AmgxAdapter(BenchmarkAdapter):
             available=evidence.available,
             capability=capability,
             dependency=self.dependency,
-            dependency_version=next(
-                (
-                    version
-                    for name, version in versions.items()
-                    if name in ("phydrax-cuda12", "phydrax-cuda13")
-                ),
-                None,
-            ),
+            dependency_version=versions.get("phydrax-cuda13"),
             reason=None if evidence.available else evidence.reason,
         )
 
