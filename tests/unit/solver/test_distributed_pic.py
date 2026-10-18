@@ -1015,10 +1015,46 @@ def _publish(
 
 
 def _assert_bitwise(actual: Any, expected: Any) -> None:
+    assert jax.tree.structure(actual) == jax.tree.structure(expected)
     for left, right in zip(
         jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
     ):
         np.testing.assert_array_equal(np.asarray(left), np.asarray(right))
+        assert np.asarray(left).tobytes() == np.asarray(right).tobytes()
+
+
+def test_reduced_deposit_has_deterministic_route_slot_order() -> None:
+    transfer = _reduced_base().transfer
+    # All slots collide at one cell center. Slot-order accumulation is one,
+    # unlike reassociated/atomic cancellation of these exactly represented values.
+    position = jnp.full((128, 1), 0.5 / 32, dtype=jnp.float64)
+    content = jnp.tile(
+        jnp.asarray([2.0**54, 1.0, -(2.0**54), 1.0], dtype=jnp.float64), 32
+    )
+    active = jnp.ones((128,), dtype=jnp.bool_)
+    deposit = eqx.filter_jit(transfer.deposit)
+    expected = np.zeros((32,), dtype=np.float64)
+    expected[0] = 32.0
+    np.testing.assert_array_equal(
+        np.asarray(deposit(position, content, active)), expected
+    )
+
+
+@pytest.mark.parametrize("invalid_active", [True, False], ids=["active", "inactive"])
+def test_reduced_deposit_preserves_failure_and_inactive_payload_semantics(
+    invalid_active: bool,
+) -> None:
+    transfer = _reduced_base().transfer
+    position = jnp.full((2, 1), 0.5 / 32, dtype=jnp.float64)
+    content = jnp.asarray([jnp.inf, 1.0], dtype=jnp.float64)
+    active = jnp.asarray([invalid_active, True], dtype=jnp.bool_)
+    result = np.asarray(eqx.filter_jit(transfer.deposit)(position, content, active))
+    if invalid_active:
+        assert np.all(np.isnan(result))
+    else:
+        expected = np.zeros((32,), dtype=np.float64)
+        expected[0] = 32.0
+        np.testing.assert_array_equal(result, expected)
 
 
 def test_same_topology_restart_continues_bitwise(tmp_path: Path) -> None:
@@ -1035,10 +1071,19 @@ def test_same_topology_restart_continues_bitwise(tmp_path: Path) -> None:
     assert restored.source.topology_id == run.topology_id
     assert restored.source.plan_id == run.plan_id
     assert restored.source.numerical_id == run.numerical_id
+    # Checkpoint transport must preserve both bits and the numerical input type,
+    # independently of the continuation reduction contract.
+    _assert_bitwise(restored.state, state)
+    for left, right in zip(
+        jax.tree.leaves(restored.state), jax.tree.leaves(state), strict=True
+    ):
+        assert left.dtype == right.dtype
+        assert left.weak_type == right.weak_type
+        assert left.sharding.is_equivalent_to(right.sharding, left.ndim)
     continued, resumed = state, restored.state
     for _ in range(3):
         continued, resumed = advance(continued), advance(resumed)
-    _assert_bitwise(resumed, continued)
+        _assert_bitwise(resumed, continued)
 
 
 def test_repartition_restart_is_a_tolerance_restart(tmp_path: Path) -> None:

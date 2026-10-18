@@ -36,6 +36,7 @@ CudaIssueCode: TypeAlias = Literal[
     "no-cuda-plugin",
     "duplicate-cuda-plugins",
     "plugin-major-mismatch",
+    "unsupported-cuda-major",
     "foreign-nvidia-distributions",
     "driver-too-old",
     "cpu-platform-selected",
@@ -256,8 +257,8 @@ class CudaEnvironmentReport(StrictModule):
 
 @checked
 def cuda_enabled(facts: CudaEnvironmentFacts, /) -> bool:
-    """Whether one CUDA plugin is installed and CUDA is not explicitly excluded."""
-    return len(facts.plugin_majors) == 1 and (
+    """Whether the CUDA13 plugin is installed and CUDA is not explicitly excluded."""
+    return facts.plugin_majors == (13,) and (
         facts.selected_platforms is None
         or any(item in ("cuda", "gpu") for item in facts.selected_platforms)
     )
@@ -296,15 +297,21 @@ def assess_cuda_environment(facts: CudaEnvironmentFacts, /) -> CudaEnvironmentRe
             "error",
             f"Multiple JAX CUDA plugins are installed: {facts.plugin_majors}.",
         )
-    if (
-        plugin is not None
-        and facts.requested_major is not None
-        and plugin != facts.requested_major
+    if (plugin is not None and plugin != 13) or (
+        facts.requested_major is not None and facts.requested_major != 13
     ):
         add(
             "plugin-major-mismatch",
             "error",
-            f"Requested CUDA {facts.requested_major}, but the JAX plugin uses CUDA {plugin}.",
+            f"Phydrax requires CUDA 13; installed CUDA intent is {facts.requested_major}, "
+            f"and the JAX plugin major is {plugin}. Install phydrax[cuda13].",
+        )
+    if facts.runtime_version is not None and facts.runtime_version[0] != 13:
+        add(
+            "unsupported-cuda-major",
+            "error",
+            f"Phydrax requires CUDA 13, but the active runtime is CUDA "
+            f"{facts.runtime_version[0]}.{facts.runtime_version[1]}. Install phydrax[cuda13].",
         )
     if facts.foreign_nvidia_distributions:
         add(
@@ -319,18 +326,13 @@ def assess_cuda_environment(facts: CudaEnvironmentFacts, /) -> CudaEnvironmentRe
         and facts.driver_version[0] < plugin
     ):
         driver_major = facts.driver_version[0]
-        advice = (
-            f" Install phydrax[cuda{driver_major}] instead."
-            if driver_major in (12, 13)
-            else " Upgrade the NVIDIA driver."
-        )
         add(
             "driver-too-old",
             "error",
-            f"The driver supports CUDA {driver_major}.{facts.driver_version[1]}, below the CUDA {plugin} plugin."
-            + advice,
+            f"The driver supports CUDA {driver_major}.{facts.driver_version[1]}, below the CUDA {plugin} plugin. "
+            "Upgrade the NVIDIA driver for CUDA 13.",
         )
-    if plugin is not None and not cuda_enabled(facts):
+    if plugin == 13 and not cuda_enabled(facts):
         add(
             "cpu-platform-selected",
             "warning",
@@ -372,6 +374,18 @@ def assess_cuda_environment(facts: CudaEnvironmentFacts, /) -> CudaEnvironmentRe
             "mixed-cuda-majors",
             "error",
             f"Mapped CUDA libraries contain multiple toolkit majors {majors}: {paths}.",
+            paths,
+        )
+    elif majors and majors != [13]:
+        paths = tuple(
+            library.path
+            for library in facts.mapped_libraries
+            if library.major is not None
+        )
+        add(
+            "unsupported-cuda-major",
+            "error",
+            f"Phydrax requires CUDA 13, but mapped libraries use CUDA {majors[0]}: {paths}.",
             paths,
         )
     return CudaEnvironmentReport(facts=facts, issues=tuple(issues))
@@ -454,33 +468,23 @@ def assess_provider_dependencies(
     return tuple(issues)
 
 
-# JAX <0.12: jax_plugins/xla_cuda{12,13}/__init__.py::_load_nvidia_libraries, in load order.
-# Both plugins share this table; the first library loaded under a soname wins.
+# JAX <0.12 CUDA13 wheel preloads, in load order.
 _JAX_CUDA_PRELOADS = (
-    ("cuda_runtime", ("libcudart.so.12",)),
     ("cu13", ("libcudart.so.13",)),
-    ("cuda_nvrtc", ("libnvrtc.so.12",)),
     ("cu13", ("libnvrtc.so.13",)),
-    ("cublas", ("libcublas.so.12", "libcublasLt.so.12")),
     ("cu13", ("libcublas.so.13", "libcublasLt.so.13")),
     ("nccl", ("libnccl.so.2",)),
-    ("cuda_cupti", ("libcupti.so.12",)),
     ("cu13", ("libcupti.so.13",)),
-    ("cusparse", ("libcusparse.so.12",)),
     ("cu13", ("libcusparse.so.12",)),
-    ("cusolver", ("libcusolver.so.11",)),
     ("cu13", ("libcusolver.so.12",)),
-    ("cufft", ("libcufft.so.11",)),
     ("cu13", ("libcufft.so.12",)),
     ("nvshmem", ("libnvshmem_host.so.3",)),
     ("cudnn", ("libcudnn.so.9",)),
 )
 
 
-def jax_plugin_preloads(plugin_major: int, /) -> tuple[tuple[str, str], ...]:
-    """Locate the installed libraries JAX preloads without importing native code."""
-    if plugin_major not in (12, 13):
-        raise ValueError(f"Unsupported JAX CUDA plugin major: {plugin_major}.")
+def jax_plugin_preloads() -> tuple[tuple[str, str], ...]:
+    """Locate CUDA13 libraries JAX preloads without importing native code."""
     loaded: dict[str, str] = {}
     if importlib.util.find_spec("nvidia") is None:
         return ()
@@ -502,9 +506,7 @@ def provider_dependency_closure(
 ) -> DependencyClosure:
     """Model a provider load after JAX's optional NVIDIA wheel preloads."""
     preloaded = (
-        jax_plugin_preloads(facts.plugin_majors[0])
-        if jax_backend_preloaded and len(facts.plugin_majors) == 1
-        else ()
+        jax_plugin_preloads() if jax_backend_preloaded and cuda_enabled(facts) else ()
     )
     return resolve_dependency_closure(
         path, library_path=_library_path(), executable=sys.executable, preloaded=preloaded
@@ -521,7 +523,7 @@ def _library_path() -> tuple[str, ...]:
 
 def _distribution_major(distribution: importlib.metadata.Distribution, /) -> int | None:
     name = distribution.metadata["Name"]
-    match = re.search(r"-cu(12|13)$", name.lower().replace("_", "-"))
+    match = re.search(r"-cu(\d+)$", name.lower().replace("_", "-"))
     if match is not None:
         return int(match[1])
     majors = {
@@ -579,12 +581,7 @@ def collect_cuda_environment(*, initialize_backend: bool) -> CudaEnvironmentFact
                         wheel_majors[
                             os.path.realpath(str(distribution.locate_file(file)))
                         ] = major
-    reference = next(iter(plugins)) if len(plugins) == 1 else requested
-    foreign = tuple(
-        sorted(
-            name for name, major in nvidia if reference is not None and major != reference
-        )
-    )
+    foreign = tuple(sorted(name for name, major in nvidia if major != 13))
     library_dirs = tuple(
         directory
         for directory in _library_path()

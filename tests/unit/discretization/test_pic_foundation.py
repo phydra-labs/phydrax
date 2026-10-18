@@ -13,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _pic_transfer(*, particle_count: Any = 2) -> Any:
+def _pic_transfer(*, particle_count: Any = 2, accumulation: Any = "deterministic") -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -25,9 +25,12 @@ def _pic_transfer(*, particle_count: Any = 2) -> Any:
     charged = phx.discretization.ChargedParticlePlan(
         -jnp.ones((particle_count,)), "electrons"
     ).prepare(particles)
-    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(
-        charged
-    )
+    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(
+        bridge,
+        execution=phx.discretization.splatting.SplatExecutionPolicy(
+            accumulation=accumulation
+        ),
+    ).prepare(charged)
     return bridge, charged, transfer
 
 
@@ -87,13 +90,29 @@ def test_pic_foundation_scenario_1() -> None:
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_whitney_current_satisfies_continuity_across_cell_and_periodic_seam() -> None:
-    bridge, _, transfer = _pic_transfer()
+@pytest.mark.parametrize("accumulation", ("fast", "deterministic", "compensated"))
+def test_whitney_current_satisfies_continuity_across_cell_and_periodic_seam(
+    accumulation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.sparse import RelationExecutionState
+
+    # Observe the real reducer: current and endpoint charges must all execute
+    # the requested policy, not merely carry it in their plan identities.
+    policies = []
+    original_reduce = RelationExecutionState.reduce
+
+    def reduce(self: Any, values: Any, **options: Any) -> Any:
+        policies.append(options["accumulation"])
+        return original_reduce(self, values, **options)
+
+    monkeypatch.setattr(RelationExecutionState, "reduce", reduce)
+    bridge, _, transfer = _pic_transfer(accumulation=accumulation)
     current = phx.discretization.pic.ChargeConservingCurrentPlan(transfer)
     start = jnp.asarray([[0.24, 0.35, 0.45], [0.98, 0.65, 0.55]])
     end = jnp.asarray([[0.27, 0.34, 0.47], [1.01, 0.66, 0.54]])
     apply = jax.jit(lambda left, right, dt: current.deposit(left, right, dt))
     result = apply(start, end, jnp.asarray(0.02))
+    assert policies and set(policies) == {accumulation}
     assert result.successful
     assert not result.capacity_overflow
     assert result.current.shape == (bridge.cochain.cell_counts[1],)

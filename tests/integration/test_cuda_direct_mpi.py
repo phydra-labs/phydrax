@@ -13,12 +13,17 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 _WORKER = _ROOT / "tests" / "_support" / "cuda_mpi_worker.py"
+_RANK_COUNT = int(os.environ.get("PHYDRAX_MPI_RANKS", "2"))
 
 
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 @pytest.mark.parametrize("gpu_direct", [True, False], ids=["cuda-direct", "host-staged"])
 @pytest.mark.parametrize("placement", ["distinct-gpus", "shared-gpu"])
-def test_cuda_mpi_collectives(gpu_direct: bool, placement: str, dtype: str) -> None:
+@pytest.mark.parametrize("rank_count", [_RANK_COUNT], ids=[f"ranks-{_RANK_COUNT}"])
+def test_cuda_mpi_collectives(
+    gpu_direct: bool, placement: str, dtype: str, rank_count: int
+) -> None:
+    assert rank_count >= 2, "Qualification requires at least two MPI ranks"
     launcher = shlex.split(os.environ.get("PHYDRAX_MPI_LAUNCHER", "mpirun"))
     if not launcher or shutil.which(launcher[0]) is None:
         pytest.skip(
@@ -34,7 +39,7 @@ def test_cuda_mpi_collectives(gpu_direct: bool, placement: str, dtype: str) -> N
         "OPENBLAS_NUM_THREADS": "1",
     }
     probe = subprocess.run(
-        [sys.executable, str(_WORKER), "probe", placement, dtype],
+        [sys.executable, str(_WORKER), "probe", placement, dtype, str(rank_count)],
         cwd=_ROOT,
         env=environment,
         capture_output=True,
@@ -46,7 +51,17 @@ def test_cuda_mpi_collectives(gpu_direct: bool, placement: str, dtype: str) -> N
         pytest.skip(probe.stdout.strip())
     assert probe.returncode == 0, probe.stdout + probe.stderr
     completed = subprocess.run(
-        [*launcher, "-np", "2", sys.executable, str(_WORKER), "run", placement, dtype],
+        [
+            *launcher,
+            "-np",
+            str(rank_count),
+            sys.executable,
+            str(_WORKER),
+            "run",
+            placement,
+            dtype,
+            str(rank_count),
+        ],
         cwd=_ROOT,
         env=environment,
         capture_output=True,
@@ -58,14 +73,23 @@ def test_cuda_mpi_collectives(gpu_direct: bool, placement: str, dtype: str) -> N
     records = [
         json.loads(line) for line in completed.stdout.splitlines() if line.startswith("{")
     ]
-    assert sorted(record["rank"] for record in records) == [0, 1], completed.stdout
+    assert sorted(record["rank"] for record in records) == list(range(rank_count)), (
+        completed.stdout
+    )
+    assert all(record["mpi_ranks"] == rank_count for record in records)
+    assert all(record["shared_memory_ranks"] == rank_count for record in records)
+    assert all(
+        record["physical_multigpu"] is (placement == "distinct-gpus")
+        for record in records
+    )
     assert all(record["placement"] == placement for record in records)
     assert all(record["dtype"] == dtype for record in records)
     assert all(record["gpu_direct"] is gpu_direct for record in records)
     ownership = records[0]["device_ownership"]
-    assert records[1]["device_ownership"] == ownership
-    assert len({tuple(device) for device in ownership}) == (
-        2 if placement == "distinct-gpus" else 1
+    assert all(record["device_ownership"] == ownership for record in records)
+    assert len(ownership) == rank_count
+    assert len({uuid for _, uuid in ownership}) == (
+        rank_count if placement == "distinct-gpus" else 1
     )
     assert len({host for host, _ in ownership}) == 1
     assert all(uuid.startswith("GPU-") for _, uuid in ownership)

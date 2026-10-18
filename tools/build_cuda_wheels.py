@@ -6,7 +6,7 @@
 
 Example (development, not release architecture qualification)::
 
-    python tools/build_cuda_wheels.py --major 13 --architectures native \
+    python tools/build_cuda_wheels.py --architectures native \
         --components cudss --python /path/to/build-env/bin/python \
         --build-dir /path/to/build/cuda13 --wheelhouse /path/to/wheelhouse
 
@@ -57,7 +57,6 @@ RELEASE_ARCHITECTURES = (
 
 
 class Options(argparse.Namespace):
-    major: int
     architectures: str | None
     components: str
     python: Path
@@ -70,7 +69,6 @@ class Options(argparse.Namespace):
 
 @dataclass(frozen=True)
 class Configuration:
-    major: int
     architectures: tuple[str, ...]
     components: tuple[str, ...]
     python: Path
@@ -101,12 +99,10 @@ class AuditFailure(RuntimeError):
 
 def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--major", type=int, choices=(12, 13), required=True)
     parser.add_argument(
         "--architectures",
         help="Semicolon-separated CMake targets, or native (development only). "
-        "Default: 80-real;86-real;89-real;90-real;100-real;120-real;120-virtual "
-        "(CUDA 12 additionally includes 70-real;75-real).",
+        "Default: 80-real;86-real;89-real;90-real;100-real;120-real;120-virtual.",
     )
     parser.add_argument(
         "--components",
@@ -124,7 +120,7 @@ def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
         "--build-dir",
         type=Path,
         required=True,
-        help="Per-major CMake build tree, reused incrementally.",
+        help="CUDA 13 CMake build tree, reused incrementally.",
     )
     parser.add_argument(
         "--download-dir",
@@ -141,8 +137,7 @@ def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
     architectures = (
         tuple(options.architectures.split(";"))
         if options.architectures is not None
-        else (("70-real", "75-real") if options.major == 12 else ())
-        + RELEASE_ARCHITECTURES
+        else RELEASE_ARCHITECTURES
     )
     if architectures != ("native",) and any(
         re.fullmatch(r"[1-9][0-9]*[af]?(-(real|virtual))?", entry) is None
@@ -159,7 +154,6 @@ def parse_configuration(argv: Sequence[str] | None = None) -> Configuration:
     if options.jobs < 1:
         parser.error("--jobs must be positive")
     return Configuration(
-        options.major,
         architectures,
         tuple(component for component in COMPONENTS if component in selected),
         options.python.absolute(),
@@ -260,8 +254,6 @@ def container_command(config: Configuration) -> list[str]:
             IMAGE,
             str(config.python),
             str(Path(__file__).resolve()),
-            "--major",
-            str(config.major),
             "--architectures",
             ";".join(config.architectures),
             "--components",
@@ -301,7 +293,7 @@ def read_json(path: Path) -> dict[str, Json]:
     return value
 
 
-def inventory(major: int) -> NvidiaInventory:
+def inventory() -> NvidiaInventory:
     versions: dict[str, str] = {}
     libraries: dict[str, Path] = {}
     executables: dict[str, Path] = {}
@@ -312,9 +304,8 @@ def inventory(major: int) -> NvidiaInventory:
         name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"] or "").lower()
         if not (name.startswith("nvidia-") or name.startswith("cudss-")):
             continue
-        suffix = re.search(r"-cu(12|13)$", name)
-        wheel_major = int(suffix.group(1)) if suffix else 13
-        if wheel_major != major:
+        suffix = re.search(r"-cu(\d+)$", name)
+        if suffix is not None and suffix.group(1) != "13":
             raise AuditFailure(
                 f"foreign NVIDIA distribution in build environment: {name}"
             )
@@ -446,11 +437,10 @@ def locate_cuda_tool(name: str, config: Configuration, wheels: NvidiaInventory) 
 def verify_shared_cudart(
     path: Path,
     elf: Elf,
-    config: Configuration,
     environment: Mapping[str, str],
     evidence: dict[str, Json],
 ) -> dict[str, Json]:
-    runtime = f"libcudart.so.{config.major}"
+    runtime = "libcudart.so.13"
     cudarts = [name for name in elf.needed if name.startswith("libcudart.so")]
     if not cudarts or any(name != runtime for name in cudarts):
         raise AuditFailure(f"{path.name}: expected NEEDED {runtime}, found {cudarts}")
@@ -560,6 +550,16 @@ def inspect_device_code(
                     f"{library.name}: missing SASS {sorted(missing_sass)} / "
                     f"PTX {sorted(missing_ptx)}"
                 )
+    release_sass = {
+        entry.removesuffix("-real")
+        for entry in RELEASE_ARCHITECTURES
+        if entry.endswith("-real")
+    }
+    release_ptx = {
+        entry.removesuffix("-virtual")
+        for entry in RELEASE_ARCHITECTURES
+        if entry.endswith("-virtual")
+    }
     return {
         "sass": sass_targets,
         "ptx": ptx_targets,
@@ -567,8 +567,8 @@ def inspect_device_code(
         "list_ptx": ptx,
         "device_code_absent": device_code_absent,
         "host_only_component": device_code_absent and host_only_allowed,
-        "release_architecture_coverage": config.architectures != ("native",)
-        and bool(sass_targets or ptx_targets),
+        "release_architecture_coverage": release_sass.issubset(sass_targets)
+        and release_ptx.issubset(ptx_targets),
     }
 
 
@@ -736,9 +736,7 @@ def verify_wheel(
     if not isinstance(build_hash, str):
         raise TypeError("validated build hash must be a string")
     for component in config.components:
-        path = (
-            extraction / f"phydrax_cuda{config.major}/lib/libphydrax_cuda_{component}.so"
-        )
+        path = extraction / f"phydrax_cuda13/lib/libphydrax_cuda_{component}.so"
         elf = elfs.get(path)
         if elf is None:
             raise AuditFailure(f"wheel lacks component library: {path.name}")
@@ -747,9 +745,7 @@ def verify_wheel(
         components[component] = {
             "sha256": file_hash(path),
             "build_hash": build_hash,
-            "shared_cudart": verify_shared_cudart(
-                path, elf, config, environment, evidence
-            ),
+            "shared_cudart": verify_shared_cudart(path, elf, environment, evidence),
             "device_code": inspect_device_code(
                 path, cuobjdump, config, environment, evidence
             ),
@@ -790,7 +786,6 @@ def build_and_repair(
     settings = {
         "build-dir": str(config.build_dir),
         "cmake.build-type": "Release",
-        "cmake.define.PHX_CUDA_MAJOR": str(config.major),
         "cmake.define.PHX_CUDA_ARCHITECTURES": ";".join(config.architectures),
         "cmake.define.PHX_CUDA_COMPONENTS": ";".join(config.components),
         "cmake.define.Python_EXECUTABLE": str(config.python),
@@ -809,7 +804,7 @@ def build_and_repair(
         str(raw),
     ]
     command.extend(f"--config-setting={key}={value}" for key, value in settings.items())
-    command.append(str(ROOT / f"native/cuda{config.major}"))
+    command.append(str(ROOT / "native/cuda13"))
     run(command, environment, evidence)
     wheels = sorted(raw.glob("*.whl"))
     if len(wheels) != 1:
@@ -841,9 +836,9 @@ def build_and_repair(
 
 def execute(config: Configuration) -> int:
     config.wheelhouse.mkdir(parents=True, exist_ok=True)
-    manifest_path = config.wheelhouse / f"phydrax-cuda{config.major}-build.json"
+    manifest_path = config.wheelhouse / "phydrax-cuda13-build.json"
     evidence: dict[str, Json] = {
-        "major": config.major,
+        "major": 13,
         "architectures": list(config.architectures),
         "components": list(config.components),
         "python": str(config.python),
@@ -854,7 +849,7 @@ def execute(config: Configuration) -> int:
     }
     environment = clean_environment(config.python, config.jobs)
     try:
-        nvidia = inventory(config.major)
+        nvidia = inventory()
         evidence["nvidia_wheels"] = dict(nvidia.versions)
         tools: dict[str, Json] = {"python": sys.version}
         for name in (

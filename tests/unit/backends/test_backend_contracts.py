@@ -131,8 +131,8 @@ def test_cuda_provider_probe_order_is_independent() -> None:
     source = """
 from phydrax._cuda_environment import collect_cuda_environment
 import sys
-if len(collect_cuda_environment(initialize_backend=False).plugin_majors) != 1:
-    print("A unique JAX CUDA plugin distribution is required")
+if collect_cuda_environment(initialize_backend=False).plugin_majors != (13,):
+    print("The JAX CUDA13 plugin distribution is required")
     sys.exit(77)
 from phydrax.backends.cudss import cudss_availability
 from phydrax.backends.amg import amgx_availability
@@ -167,13 +167,12 @@ import sys
 from pathlib import Path
 from phydrax._cuda_environment import collect_cuda_environment
 facts = collect_cuda_environment(initialize_backend=False)
-if len(facts.plugin_majors) != 1:
-    print("A unique JAX CUDA plugin distribution is required")
+if facts.plugin_majors != (13,):
+    print("The JAX CUDA13 plugin distribution is required")
     sys.exit(77)
 from tests._support.elf import write_shared_object
 directory = Path(sys.argv[1])
-major = 12 if facts.plugin_majors[0] == 13 else 13
-soname = f"libcublas.so.{major}"
+soname = "libcublas.so.12"
 write_shared_object(directory / soname, soname=soname)
 extension = write_shared_object(
     directory / "fakeprov.cpython-312-x86_64-linux-gnu.so",

@@ -341,7 +341,7 @@ class AmgXBackend(AbstractExternalBackend):
         return probe_cuda_component(
             self.capabilities,
             component="amgx",
-            requirement="install phydrax[cuda12] or phydrax[cuda13] for the JAX CUDA major",
+            requirement="install phydrax[cuda13] for JAX CUDA13",
         )
 
     def plan(

@@ -28,6 +28,8 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
 
     The shape order is the transfer's ``shape_order``. All orders use the
     owning cubical kernel's exact polynomial moments on knot-split segments.
+    Current and endpoint charge share the transfer's accumulation policy; the
+    default deterministic policy must not be replaced by atomic reduction.
 
     Nonperiodic axes clip every path at the closed domain box: a path whose
     head leaves the box ends at its exit point, where its charge is deposited,
@@ -126,7 +128,9 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         )
         values = (query.coefficients * charges[:, None] / dt).reshape((-1,))
         flux_content, evidence = execution.reduce(
-            values, accumulation="fast", output="dense"
+            values,
+            accumulation=self.transfer.plan.execution.accumulation,
+            output="dense",
         )
         return (
             flux_content,

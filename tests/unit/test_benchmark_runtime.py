@@ -250,10 +250,19 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -
     assert payload["package_fingerprint"]
 
 
-def test_captured_environment_records_xla_worker_count(monkeypatch: Any) -> None:
-    monkeypatch.setenv("NPROC", "3")
-    environment = capture_environment()
-    assert dict(environment.performance_environment)["NPROC"] == "3"
+@pytest.mark.parametrize(
+    ("name", "first", "second"),
+    [("NPROC", "3", "4"), ("NCCL_NVLS_ENABLE", "0", "1")],
+    ids=["cpu-workers", "nvls"],
+)
+def test_performance_configuration_changes_environment_identity(
+    monkeypatch: pytest.MonkeyPatch, name: str, first: str, second: str
+) -> None:
+    monkeypatch.setenv(name, first)
+    before = capture_environment()
+    monkeypatch.setenv(name, second)
+    after = capture_environment()
+    assert before.fingerprint != after.fingerprint
 
 
 def _benchmark_source_tree(root: Path) -> Path:

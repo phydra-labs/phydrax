@@ -673,7 +673,7 @@ before any numeric setup runs.
 | `DenseLU`, `DenseCholesky`, `DenseQR`, `DenseSVD` | `jax-dense` | Explicitly materializable operators within entry, byte, factor, and workspace budgets |
 | `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical CSR square system, including shared-pattern batches and complex coordinates, on CUDA through native JAX sparse QR with 32-bit indices. A singular system raises from the native call instead of returning failure status, so automatic planning selects it only under `FailurePolicy("error")` |
 | `SparseLU(provider="jax-cpu")` | `jax-sparse` | Canonical CSR square system through JAX's JIT-compatible CPU lowering to SciPy sparse LU; mathematical solve derivatives are supported, algorithmic factorization derivatives are not |
-| `SparseLDLT(provider="cudss", factor_cache_capacity=8)` | `cudss` | Linux x86-64 CUDA 12/13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
+| `SparseLDLT(provider="cudss", factor_cache_capacity=8)` | `cudss` | Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
 | `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
 | `GMRES`, `PCG`, `MINRES`, `FGMRES`, `BiCGStab`, `LSMR`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods; `BiCGStab` requires Euclidean or diagonal-metric coordinates, and `LSMR` retains the real Euclidean unweighted envelope |
 | `ConjugateGradient` | `lineax` | Lineax-backed Euclidean or diagonal-metric CG with real coordinates |
@@ -2774,7 +2774,7 @@ Current boundaries are deliberate and reported before execution:
 - iterative providers require an unbatched operator; use explicit outer
   `vmap`/batch policy rather than accidental batch semantics;
 - native device sparse QR requires CUDA canonical CSR;
-- cuDSS requires the matching CUDA 12 or CUDA 13 companion on Linux
+- cuDSS requires the CUDA 13 companion on Linux
   x86-64, uses 32-bit canonical CSR indices, and reports
   positive/negative inertia without claiming reliable zero inertia;
 - host sparse direct providers are non-JIT and non-differentiable;

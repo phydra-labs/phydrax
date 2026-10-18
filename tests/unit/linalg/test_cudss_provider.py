@@ -2,6 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import json
+import os
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -468,64 +475,122 @@ def test_cudss_release_inside_jit_and_idempotence() -> None:
 
 
 @pytest.mark.cuda_native
-def test_cudss_same_plan_isolated_across_two_devices() -> None:
+@pytest.mark.parametrize("simultaneous", [False, True], ids=["serial", "simultaneous"])
+def test_cudss_same_plan_isolated_across_selected_devices(
+    record_property: Callable[[str, object], None], simultaneous: bool
+) -> None:
     from phydrax._cuda_native import cuda_partition_key
     from phydrax._jax_config import default_device
 
     _require_cudss()
-    devices = jax.devices("gpu")[:2]
-    if len(devices) < 2:
-        pytest.skip("Same-plan cuDSS qualification requires two CUDA devices")
+    visible = jax.devices("gpu")
+    count = int(os.environ.get("PHYDRAX_CUDA_QUALIFICATION_GPUS", len(visible)))
+    assert 0 < count <= len(visible), (
+        "Required cuDSS qualification devices are unavailable"
+    )
+    devices = visible[:count]
     prepared: list[la.PreparedLinearSolve] = []
+    alternatives: list[la.PreparedLinearSolve] = []
+    owned: list[la.PreparedLinearSolve] = []
     matrices: list[jax.Array] = []
     forcings: list[jax.Array] = []
-    try:
-        for index, device in enumerate(devices):
-            with default_device(device):
-                matrix = jnp.asarray(
-                    [[4.0 + index, 1.0], [1.0, 3.0 + index]], dtype=jnp.float32
-                )
-                matrices.append(matrix)
-                forcings.append(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
-                prepared.append(_prepare(matrix, 1))
-        assert prepared[0].plan.plan_id == prepared[1].plan.plan_id
-        key = cuda_partition_key(prepared[0].plan.plan_id)
-        for index, device in enumerate(devices):
-            with default_device(device):
-                result = eqx.filter_jit(la.solve)(prepared[index], forcings[index])
-                np.testing.assert_allclose(
-                    result.value,
-                    np.linalg.solve(
-                        np.asarray(matrices[index]), np.asarray(forcings[index])
-                    ),
-                    rtol=1e-6,
-                )
-                assert result.value.devices() == {device}
-                assert int(result.provenance.native_rebuilds) == 0
-        partitions = [
+    solve = eqx.filter_jit(la.solve)
+
+    def on_devices(operation: Callable[[int], Any]) -> list[Any]:
+        # Synchronize real device-local submissions, not mocked handles or timing.
+        barrier = Barrier(count)
+
+        def invoke(index: int) -> Any:
+            with default_device(devices[index]):
+                if simultaneous:
+                    barrier.wait(timeout=120)
+                return operation(index)
+
+        if simultaneous:
+            with ThreadPoolExecutor(max_workers=count) as workers:
+                return list(workers.map(invoke, range(count)))
+        return [invoke(index) for index in range(count)]
+
+    def build(index: int, scale: int = 1) -> la.PreparedLinearSolve:
+        item = _prepare(matrices[index] * scale, 1)
+        owned.append(item)
+        return item
+
+    def check(index: int, item: la.PreparedLinearSolve, matrix: jax.Array) -> Any:
+        result = solve(item, forcings[index])
+        result.value.block_until_ready()
+        np.testing.assert_allclose(
+            result.value,
+            np.linalg.solve(np.asarray(matrix), np.asarray(forcings[index])),
+            rtol=1e-6,
+        )
+        assert bool(result.successful)
+        assert result.value.devices() == {devices[index]}
+        return result
+
+    def partitions() -> list[Any]:
+        jax.effects_barrier()
+        return [
             entry
             for entry in phx.backends.cuda_native_resources().partitions
             if entry.component == "cudss" and entry.partition == key
         ]
-        assert {(entry.device, entry.live, entry.capacity) for entry in partitions} == {
+
+    try:
+        for index, device in enumerate(devices):
+            with default_device(device):
+                matrices.append(
+                    jnp.asarray(
+                        [[4.0 + index, 1.0], [1.0, 3.0 + index]], dtype=jnp.float32
+                    )
+                )
+                forcings.append(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
+        prepared.extend(on_devices(build))
+        assert len({item.plan.plan_id for item in prepared}) == 1
+        assert len({item.template.template_id for item in prepared}) == 1
+        key = cuda_partition_key(prepared[0].plan.plan_id)
+        results = on_devices(lambda index: check(index, prepared[index], matrices[index]))
+        assert all(int(result.provenance.native_rebuilds) == 0 for result in results)
+        assert {(entry.device, entry.live, entry.capacity) for entry in partitions()} == {
             (device.id, 1, 1) for device in devices
         }
-        la.release(prepared[0])
-        with default_device(devices[1]):
-            result = la.solve(prepared[1], forcings[1])
-            np.testing.assert_allclose(
-                result.value,
-                np.linalg.solve(np.asarray(matrices[1]), np.asarray(forcings[1])),
-                rtol=1e-6,
+        # Release every device in turn; other device-local factors must stay resident.
+        for released in range(count):
+            with default_device(devices[released]):
+                assert bool(la.release(prepared[released]))
+                assert not bool(la.release(prepared[released]))
+            assert {entry.device for entry in partitions()} == {
+                device.id for index, device in enumerate(devices) if index != released
+            }
+            results = on_devices(
+                lambda index: check(index, prepared[index], matrices[index])
             )
-            assert int(result.provenance.native_rebuilds) == 0
+            assert [int(result.provenance.native_rebuilds) > 0 for result in results] == [
+                index == released for index in range(count)
+            ]
+            # Read-only solves rebuild under fresh names, not the released token.
+            with default_device(devices[released]):
+                prepared[released] = build(released)
+        # All devices evict and rebuild distinct coefficients under the same plan.
+        alternatives.extend(on_devices(lambda index: build(index, 2)))
+        assert {item.plan.plan_id for item in (*prepared, *alternatives)} == {
+            prepared[0].plan.plan_id
+        }
+        for items, scale in ((prepared, 1), (alternatives, 2)) * 3:
+            results = on_devices(
+                lambda index: check(index, items[index], matrices[index] * scale)
+            )
+            assert all(int(result.provenance.native_rebuilds) > 0 for result in results)
+            assert {
+                (entry.device, entry.live, entry.capacity) for entry in partitions()
+            } == {(device.id, 1, 1) for device in devices}
+        # Evict anonymous read-rebuild memos with owned tokens before releasing.
+        on_devices(build)
     finally:
-        for item in prepared:
+        for item in owned:
             la.release(item)
-    assert not any(
-        entry.component == "cudss" and entry.partition == key
-        for entry in phx.backends.cuda_native_resources().partitions
-    )
+    assert not partitions()
+    record_property("cuda_native_devices", json.dumps([device.id for device in devices]))
 
 
 @pytest.mark.cuda_native

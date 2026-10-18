@@ -2,8 +2,7 @@
 
 Lane-reference ownership runs the owner regions as named vmap lanes on one
 device with the same collectives as device-collective ownership; the
-device-collective case runs only in a dedicated process with
-``JAX_NUM_CPU_DEVICES=2``. Forced CPU devices
+device-collective cases use two or four available devices. Forced CPU devices
 prove functional collective parity only, not accelerator or multi-host
 qualification. The oracle enumerates every periodic image route on the host
 by brute force and evaluates the same native MACE layers on the global graph
@@ -96,9 +95,7 @@ def _ownership(owners: int, *, devices: bool = False) -> DistributedOwnershipPla
     count = len(jax.devices())
     if devices:
         if count < owners or count % owners:
-            pytest.skip(
-                "Run with JAX_NUM_CPU_DEVICES=2 to exercise device-collective owners."
-            )
+            pytest.skip(f"Requires a visible device count divisible by {owners} owners.")
         return DistributedOwnershipPlan(
             address, runtime.child_groups(count // owners)[0], 8
         )
@@ -254,9 +251,10 @@ def test_lane_owners_match_global_energy_forces_and_strain(layers: int) -> None:
     _assert_global_parity(_plan(model), model)
 
 
-def test_device_collective_owners_match_global() -> None:
+@pytest.mark.parametrize("owners", [2, 4], ids=["two-owners", "four-owners"])
+def test_device_collective_owners_match_global(owners: int) -> None:
     model = _model(2)
-    _assert_global_parity(_plan(model, devices=True), model)
+    _assert_global_parity(_plan(model, owners=owners, devices=True), model)
 
 
 def test_multi_hop_dependency_crosses_owners_at_successive_layers() -> None:

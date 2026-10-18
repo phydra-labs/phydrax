@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.typing import DTypeLike
 
 import phydrax.lifecycle._distributed_checkpoint as checkpoint_module
 from phydrax import config as pxconfig
@@ -26,6 +28,7 @@ from phydrax.discretization._distributed_field import (
 )
 from phydrax.execution import (
     AxisBinding,
+    bind_execution_group,
     DeviceResource,
     DistributedIndexEpochPlan,
     DistributionMode,
@@ -55,6 +58,7 @@ from phydrax.lifecycle import (
     publish_process_checkpoint,
     RepositoryCorruptionError,
     restore_global_array_from_checkpoint,
+    snapshot_addressable_arrays,
 )
 from phydrax.lifecycle._repository import (
     HPCFilesystemProfile,
@@ -356,14 +360,30 @@ def test_process_local_epoch_preserves_global_ids_and_fixed_capacity() -> None:
     assert all(len(batch.indices) == 2 for batch in four_processes)
 
 
-def test_generic_halo_shard_map_matches_forward_and_transpose_references() -> None:
-    devices = tuple(jax.devices()[:2])
-    if len(devices) < 2:
-        pytest.skip("requires two real or explicitly configured JAX devices")
+@pytest.mark.parametrize("partition_count", [2, 4])
+def test_generic_halo_shard_map_matches_forward_and_transpose_references(
+    partition_count: int,
+) -> None:
+    devices = tuple(jax.devices()[:partition_count])
+    if len(devices) < partition_count:
+        pytest.skip(
+            f"requires {partition_count} real or explicitly configured JAX devices"
+        )
+    group = bind_execution_group(
+        ExecutionGroupSpec(
+            f"test-halo-{partition_count}",
+            tuple(sorted({device.process_index for device in devices})),
+            tuple((device.process_index, device.id) for device in devices),
+            mesh_axes=(("parts", partition_count),),
+        )
+    )
+    assert group.devices == devices
     halo = DistributedHaloPlan(
-        jnp.asarray([0, 0, 1, 1]),
-        jnp.asarray([[1, 2]]),
-        2,
+        jnp.repeat(jnp.arange(partition_count), 2),
+        jnp.asarray(
+            [[2 * part + 1, 2 * part + 2] for part in range(partition_count - 1)]
+        ),
+        partition_count,
     )
 
     def action(part: Any, local: Any, global_ids: Any, valid: Any, owned: Any) -> Any:
@@ -382,16 +402,16 @@ def test_generic_halo_shard_map_matches_forward_and_transpose_references() -> No
         transpose,
         operator_name="test-neighbor-sum",
     )
-    values = jnp.asarray([1.0, 2.0, 3.0, 4.0])
-    cotangent = jnp.asarray([0.5, 1.0, 1.5, 2.0])
+    values = jnp.arange(1, 2 * partition_count + 1, dtype=jnp.float64)
+    cotangent = values / 2
+    forward = operator.distributed(values, execution_group=group)
+    transposed = operator.distributed_transpose(cotangent, execution_group=group)
+    np.testing.assert_allclose(forward, operator.serial_reference(values))
     np.testing.assert_allclose(
-        operator.distributed(values),
-        operator.serial_reference(values),
-    )
-    np.testing.assert_allclose(
-        operator.distributed_transpose(cotangent),
+        transposed,
         operator.serial_transpose_reference(cotangent),
     )
+    np.testing.assert_allclose(jnp.vdot(forward, cotangent), jnp.vdot(values, transposed))
 
 
 def _repository(tmp_path: Path, maximum_chunk_bytes: int = 64) -> POSIXArtifactRepository:
@@ -774,22 +794,41 @@ def test_local_launch_rank_projection_retains_disjoint_device_ids() -> None:
 
 
 @pytest.mark.parametrize(
-    ("platform", "cpu_devices"),
-    [("cpu", 1), ("cpu", 2), ("gpu", 1)],
-    ids=["one-cpu-per-rank", "two-cpus-per-rank", "distinct-gpus"],
+    ("platform", "process_count", "devices_per_process"),
+    [
+        ("cpu", 2, 1),
+        ("cpu", 1, 4),
+        ("cpu", 2, 2),
+        ("cpu", 4, 1),
+        ("gpu", 2, 1),
+        ("gpu", 1, 4),
+        ("gpu", 2, 2),
+        ("gpu", 4, 1),
+    ],
+    ids=[
+        "cpu-2x1",
+        "cpu-1x4",
+        "cpu-2x2",
+        "cpu-4x1",
+        "gpu-2x1",
+        "gpu-1x4",
+        "gpu-2x2",
+        "gpu-4x1",
+    ],
 )
 def test_local_substrate_launcher_preserves_device_ownership(
-    platform: str, cpu_devices: int
+    platform: str, process_count: int, devices_per_process: int
 ) -> None:
     if platform == "gpu" and (
-        jax.default_backend() != "gpu" or jax.local_device_count() < 2
+        jax.default_backend() != "gpu"
+        or jax.local_device_count() < process_count * devices_per_process
     ):
-        pytest.skip("requires two visible GPUs")
+        pytest.skip(f"requires {process_count * devices_per_process} visible GPUs")
     root = Path(__file__).parents[2]
     environment = pxconfig.environment(
         pxconfig.RuntimeConfig(
             platforms=("cpu",) if platform == "cpu" else ("cuda",),
-            cpu_device_count=cpu_devices,
+            cpu_device_count=devices_per_process,
             cpu_collectives_implementation="gloo",
         )
     )
@@ -799,15 +838,26 @@ def test_local_substrate_launcher_preserves_device_ownership(
         OMP_NUM_THREADS="1",
         OPENBLAS_NUM_THREADS="1",
     )
+    if platform == "gpu" and process_count == 1:
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        selected = (
+            visible.split(",")[:devices_per_process]
+            if visible is not None
+            else [
+                str(device.local_hardware_id)
+                for device in jax.local_devices()[:devices_per_process]
+            ]
+        )
+        environment["CUDA_VISIBLE_DEVICES"] = ",".join(selected)
     completed = subprocess.run(
         [
             sys.executable,
             "-m",
             "tools.distributed_substrate_benchmark",
             "--local-processes",
-            "2",
+            str(process_count),
             "--devices-per-process",
-            "1",
+            str(devices_per_process),
             "--size",
             "17",
             "--iterations",
@@ -820,19 +870,77 @@ def test_local_substrate_launcher_preserves_device_ownership(
         timeout=180,
         check=False,
     )
+    if process_count > 1 and not sys.platform.startswith("linux"):
+        assert completed.returncode != 0
+        assert "host mapping evidence" in completed.stdout + completed.stderr
+        return
     assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(completed.stdout.strip().splitlines()[-1])
     runtime = report["runtime"]
-    local_count = cpu_devices if platform == "cpu" else 1
-    assert runtime["process_count"] == 2
-    assert runtime["global_device_count"] == 2 * local_count
+    local_count = devices_per_process
+    assert runtime["process_count"] == process_count
+    assert runtime["global_device_count"] == process_count * local_count
     assert runtime["local_device_count"] == local_count
     assert runtime["local_hardware_ids_by_process"] == (
-        [list(range(cpu_devices)), list(range(cpu_devices))]
+        [list(range(local_count)) for _ in range(process_count)]
         if platform == "cpu"
-        else [[0], [1]]
+        else [
+            list(range(rank * local_count, (rank + 1) * local_count))
+            for rank in range(process_count)
+        ]
     )
     assert report["problem"]["group_identity_consistent"]
+    hosts = runtime["process_host_ids"]
+    if process_count > 1:
+        assert [process for process, host in hosts] == list(range(process_count))
+        assert len({host for process, host in hosts}) == 1
+    else:
+        assert hosts == []
+    admission = report["resource_admission"]
+    assert admission["admitted"]
+    assert admission["group_id"] == runtime["execution_group_id"]
+    assert admission["request"]["host_count"] == 1
+    assert admission["request"]["process_count"] == process_count
+    assert admission["request"]["accelerator_count"] == (
+        process_count * local_count if platform == "gpu" else 0
+    )
+    assert admission["memory_envelope"] == "declared"
     assert report["weighted_mean"]["absolute_error"] < 1.0e-12
     assert report["distributed_pcg"]["converged"]
     assert report["distributed_pcg"]["maximum_solution_error"] < 1.0e-12
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize(
+    ("value", "dtype"),
+    [(True, jnp.bool_), (1.5, jnp.float64)],
+    ids=["boolean", "float64"],
+)
+def test_replicated_scalar_checkpoint_keeps_canonical_owner_and_replica(
+    value: bool | float, dtype: DTypeLike
+) -> None:
+    devices = tuple(
+        sorted(
+            jax.devices(),
+            key=lambda device: (device.process_index, device.id),
+            reverse=True,
+        )
+    )
+    owner = devices[-1]
+    mesh = Mesh(np.asarray(devices, dtype=object), ("replicas",))
+    array = jax.device_put(
+        jnp.asarray(value, dtype=dtype), NamedSharding(mesh, PartitionSpec())
+    )
+    snapshots = snapshot_addressable_arrays({"scalar": array})
+    if owner.process_index != jax.process_index():
+        assert snapshots == ()
+        return
+    (snapshot,) = snapshots
+    assert snapshot.global_shape == snapshot.index == ()
+    assert snapshot.process_index == owner.process_index
+    assert snapshot.device_id == owner.id
+    assert snapshot.replica_id == len(devices) - 1
+    assert snapshot.dtype == np.dtype(dtype).str
+    np.testing.assert_array_equal(snapshot.payload, np.asarray(value, dtype=dtype))
+    (repeated,) = snapshot_addressable_arrays({"scalar": array})
+    assert repeated.layout_id == snapshot.layout_id

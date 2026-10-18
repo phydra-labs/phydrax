@@ -44,9 +44,17 @@ inject the same explicit rendezvous identity. Each rank's environment replaces
 the base environment's rank settings as one group, clearing local device IDs and
 bind addresses it does not set, while keeping timeouts the base already selects.
 Use `devices_per_process=1` to assign one distinct local GPU to each worker.
-The local substrate benchmark exposes this as `--devices-per-process` and
-checks actual GPU ownership. Its diagonal solve is a bootstrap and collective
-smoke, not a solver-scaling qualification.
+The local substrate benchmark exposes this as `--devices-per-process`, checks
+launched workers' actual GPU ownership, and admits its root group against an
+explicit declared resource request before numerical work. The local smoke
+matrix covers one process with four visible devices, two workers with two
+devices each (`--local-processes 2 --devices-per-process 2`), and four workers
+with one each (`4` and `1`). A single-process invocation uses all visible GPUs;
+select a subset with `CUDA_VISIBLE_DEVICES` before launch. Reports include the
+explicit `NCCL_NVLS_ENABLE` setting, physical-host ownership, inventory/group
+identity, resource admission, weighted mean error, and diagonal PCG
+convergence/error. This bounded smoke is not a
+solver-scaling qualification or a certified memory envelope.
 
 ::: phydrax.execution.RuntimeInfo
 
@@ -129,9 +137,22 @@ their granularity, not an accuracy guarantee.
 in an initialized multi-process runtime: every rank must call them in the same
 collective sequence. Device allocator capacities are exchanged in canonical
 device order, using only each device owner's observation, so all ranks derive
-the same inventory and execution-group identities. Local host and device memory
-samples remain evidence excluded from `inventory_id`; use `sample_host_memory`
-and `sample_device_memory` for rank-local observation without coordination.
+the same inventory and execution-group identities. Multi-process discovery also
+exchanges each process's Linux `/proc/sys/kernel/random/boot_id`, an authoritative
+kernel boot identity shared by ranks on the same physical host. Canonically
+ordered `process_host_ids` use `linux-boot-<uuid>` identities, not hostnames,
+launcher rank guesses, or one-host-per-process assumptions. Missing, unreadable,
+invalid, or unsupported kernel identity on any rank leaves the entire mapping
+empty; multi-process resource admission then explicitly refuses missing host
+mapping evidence. Discovery itself can still report devices and local samples.
+Multi-process inventory and derived execution-group/plan identities intentionally
+change to include this host ownership and change again after a host reboot.
+Single-process discovery retains its existing identity and empty host mapping.
+
+Local timestamped host and device memory samples remain evidence excluded from
+`inventory_id`; discovery does not infer or fabricate remote memory samples.
+Use `sample_host_memory` and `sample_device_memory` for rank-local observation
+without coordination.
 The allocator limit becomes `DeviceResource.memory_bytes` when exposed. A
 `ResourceRequest(memory_envelope="certified")` admits a candidate only when its
 `ExecutionResourceEvidence` declares per-host (and, for accelerators,
@@ -365,6 +386,11 @@ Distributed checkpoints elect one authoritative device for replicated shards,
 publish process-local artifacts transactionally, validate exact non-overlapping
 coverage, and restore directly into a destination sharding. A failed process
 publication cannot replace the previous visible checkpoint.
+Replicated scalars and arrays with one locally addressable replica use JAX's
+public local-data view rather than its globally sharded shard-view shortcut.
+Canonical owner selection, replica IDs, dtypes, shapes, and checkpoint layout
+identities are preserved; no global gather or device-to-device copy is introduced.
+
 
 ### Numerical-relativity specialization
 

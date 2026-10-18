@@ -211,8 +211,9 @@ def probe_backend(
     ``device_platform`` names the JAX runtime (for example ``"cuda"``) that a
     device provider executes on; without such a device it is unavailable and the
     module is not imported. ``cuda_libraries`` locates the provider's native
-    objects without importing it; with CUDA enabled, environment errors and
-    dependencies of another CUDA major refuse the provider before import.
+    objects without importing it; unsupported CUDA installations refuse the
+    provider before import, even with CPU selected. With CUDA enabled, foreign
+    provider dependencies are also refused before import.
     """
     if not isinstance(capabilities, BackendCapabilities):
         raise TypeError("capabilities must be BackendCapabilities.")
@@ -261,7 +262,7 @@ def probe_backend(
         else None
     )
     cuda = facts is not None and cuda_enabled(facts)
-    if facts is not None and cuda:
+    if facts is not None:
         issues = tuple(
             issue
             for issue in assess_cuda_environment(facts).issues

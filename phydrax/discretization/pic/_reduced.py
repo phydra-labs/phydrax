@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...sparse import EdgeRelation, RelationExecutionPlan
 from .._reduced_differences import backward_difference, forward_difference
 from .._tensor_support import PreparedTensorGrid
 from ._boundary import PICBoundaryResult
@@ -50,7 +51,11 @@ class ReducedPICCurrentResult(StrictModule):
 
 
 class ReducedPICTransferPlan(StrictModule, NonTrainableState):
-    """dD3V CIC transfer with conservative physical-boundary assignment."""
+    """dD3V CIC transfer with conservative physical-boundary assignment.
+
+    Deposits use the canonical deterministic sparse reduction in stencil-route,
+    then particle-slot order, including on accelerators.
+    """
 
     grid: PreparedTensorGrid
     laplacian_bases: tuple[tuple[Array, Array], ...]
@@ -110,6 +115,8 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
                 "grid": grid.prepared_id,
                 "tolerance": tolerance_,
                 "maximum_path_segments": segments,
+                "accumulation": "deterministic",
+                "route_order": "route-slot",
             }
         )
 
@@ -160,11 +167,29 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         if values.shape != active.shape or values.shape != (points.shape[0],):
             raise ValueError("Reduced PIC payload/activity must preserve capacity.")
         indices, weights = self._routes(points)
-        target = jnp.zeros((int(np.prod(self.shape)),), dtype=points.dtype)
-        for route in range(indices.shape[1]):
-            target = target.at[indices[:, route]].add(
-                jnp.where(active, values * weights[:, route], 0.0)
+        # Preserve route-major, then slot order without colliding atomic adds.
+        # Restarts on the same topology retain this slot order exactly.
+        relation = EdgeRelation(
+            jnp.arange(indices.size, dtype=jnp.int32),
+            indices.T.reshape((-1,)),
+            source_size=indices.size,
+            target_size=int(np.prod(self.shape)),
+            valid=jnp.broadcast_to(active, indices.T.shape).reshape((-1,)),
+        )
+        target, evidence = (
+            RelationExecutionPlan()
+            .prepare(relation)
+            .reduce(
+                (weights.T * values[None, :]).reshape((-1,)),
+                accumulation="deterministic",
+                output="dense",
             )
+        )
+        # The array-valued transfer boundary must not expose a usable partial
+        # deposit if the native reduction refuses its structure or payload.
+        target = jnp.where(
+            evidence.successful, target, jnp.asarray(jnp.nan, target.dtype)
+        )
         return target.reshape(self.shape) / self.cell_volume
 
     def gather(

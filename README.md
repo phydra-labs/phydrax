@@ -633,16 +633,15 @@ The base install uses CPU JAX. Choose one CUDA extra for NVIDIA GPUs on Linux:
 
 ```bash
 pip install phydrax             # CPU
-pip install "phydrax[cuda12]"    # Driver reports CUDA >= 12.0 (R525+)
 pip install "phydrax[cuda13]"    # Driver reports CUDA >= 13.0 (R580+)
 ```
 
-The CUDA extras install JAX's CUDA plugin, NVIDIA wheels, and an exclusivity
-marker; they cannot be combined. On Linux x86-64 they also install the matching
-`phydrax-cuda12` or `phydrax-cuda13` companion with cuDSS, AmgX, and QUDA.
-Linux aarch64 has no companion yet. GPU-direct mpi4jax requires a matching
-user-provided build. See [Installation](docs/installation.md) for diagnostics,
-architecture coverage, switching CUDA majors, and distributed deployment.
+The CUDA 13 extra installs JAX's CUDA plugin, NVIDIA wheels, and a metadata
+marker recording installed CUDA intent. On Linux x86-64 it also installs the
+`phydrax-cuda13` companion with cuDSS, AmgX, and QUDA. CUDA 13 is the only
+supported CUDA major. Linux aarch64 has no companion yet. GPU-direct mpi4jax
+requires a matching user-provided build. See [Installation](docs/installation.md)
+for diagnostics, architecture coverage, and distributed deployment.
 
 The base install includes native JAXPR structural tracing and deterministic
 coloring for sparse derivative plans. Compiled sparse Jacobian and Hessian plans

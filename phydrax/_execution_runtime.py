@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from uuid import UUID
 
 import jax
 import numpy as np
@@ -25,13 +28,42 @@ from ._execution_sampling import sample_device_memory, sample_host_memory
 from ._fingerprint import canonical_fingerprint
 
 
+def _local_host_boot_id() -> bytes | None:
+    """Read kernel boot identity, never a hostname or a rank-derived guess."""
+
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        identity = UUID(Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return identity.bytes if identity.int else None
+
+
+def _discover_process_hosts() -> tuple[tuple[int, str], ...]:
+    """Exchange fixed-size kernel identities; incomplete evidence stays unknown."""
+
+    identity = _local_host_boot_id()
+    local = np.frombuffer(identity if identity is not None else bytes(16), dtype=np.uint8)
+    identities = np.asarray(multihost_utils.process_allgather(local, tiled=False))
+    if any(not np.any(record) for record in identities):
+        return ()
+    return tuple(
+        (process, f"linux-boot-{UUID(bytes=record.tobytes())}")
+        for process, record in enumerate(identities)
+    )
+
+
 def discover_resource_inventory() -> ResourceInventory:
     """Collectively describe every JAX device after runtime bootstrap.
 
     Device capacity is the allocator ``bytes_limit`` reported by its owning
     process. All processes exchange capacity in canonical device order so the
-    inventory identity is shared. Timestamped host and device memory samples
-    remain local evidence; unavailable owner capacity remains unknown.
+    inventory identity is shared. Linux kernel boot identities establish physical
+    host ownership across processes; unavailable identity leaves the host mapping
+    empty so multi-process resource admission refuses it. Timestamped host and
+    device memory samples remain local evidence; unavailable owner capacity
+    remains unknown. Single-process inventory identity is unchanged.
 
     Every process must call discovery in the same collective sequence. For
     rank-local memory observations, use ``sample_host_memory`` and
@@ -45,6 +77,7 @@ def discover_resource_inventory() -> ResourceInventory:
     capacity = {
         sample.key: sample.allocator_limit.value_bytes for sample in device_memory
     }
+    process_hosts: tuple[tuple[int, str], ...] = ()
     if jax.process_count() > 1:
         local_capacity = np.asarray(
             [capacity.get((device.process_index, device.id)) or 0 for device in devices],
@@ -59,6 +92,7 @@ def discover_resource_inventory() -> ResourceInventory:
             )
             for index, device in enumerate(devices)
         }
+        process_hosts = _discover_process_hosts()
     resources = tuple(
         DeviceResource(
             process_index=device.process_index,
@@ -76,6 +110,7 @@ def discover_resource_inventory() -> ResourceInventory:
         jax.process_count(),
         process,
         resources,
+        process_host_ids=process_hosts,
         host_memory=(sample_host_memory(),),
         device_memory=device_memory,
     )

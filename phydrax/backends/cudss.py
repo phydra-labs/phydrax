@@ -34,7 +34,7 @@ def cudss_availability() -> BackendAvailability:
         CUDSS_CAPABILITIES,
         component="cudss",
         requirement=(
-            "install phydrax[cuda12] or phydrax[cuda13] on Linux x86-64 "
+            "install phydrax[cuda13] on Linux x86-64 "
             "with an NVIDIA Turing-or-newer device"
         ),
     )

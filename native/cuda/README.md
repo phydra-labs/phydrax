@@ -1,20 +1,17 @@
-# Phydrax CUDA companions
+# Phydrax CUDA companion
 
-`phydrax-cuda12` and `phydrax-cuda13` are lockstep, wheel-only companions.
-Each contains separate lazily loaded cuDSS, AmgX, and QUDA libraries using the
+`phydrax-cuda13` is the lockstep, wheel-only CUDA 13 companion.
+It contains separate lazily loaded cuDSS, AmgX, and QUDA libraries using the
 public JAX FFI C ABI. NVIDIA libraries are runtime dependencies supplied by
 NVIDIA wheels, not copied into the companion. The CUDA runtime is shared.
 
 ## Build
 
-Use a Python environment containing the selected companion's build requirements
-from `../cuda12/pyproject.toml` or `../cuda13/pyproject.toml`. Never build against a
+Use a Python environment containing the companion's build requirements
+from `../cuda13/pyproject.toml`. Never build against a
 system CUDA toolkit. CMake assembles a symlink-only toolkit from installed NVIDIA
 wheel RECORDs inside its build tree without modifying site-packages. Matching
-toolkit symlinks are retained across reconfiguration; CUDA 12 compiler archive
-files consistently take precedence over overlapping wheel records. CUDA 12's
-compiler is the SHA256-verified NVIDIA `cuda_nvcc` 12.9.86 redistributable; NVIDIA's
-CUDA 12 compiler wheel lacks `nvcc`. Downloads default to
+toolkit symlinks are retained across reconfiguration. Downloads default to
 `${CMAKE_BINARY_DIR}/downloads`; developers can pass
 `-DPHX_CUDA_DOWNLOAD_DIR=/path/to/shared-cache` to reuse archives across builds.
 The wheel sets omit driver stubs, so SHA256-pinned NVIDIA
@@ -30,7 +27,7 @@ From the repository root, a development component build is:
 env -u LD_LIBRARY_PATH -u CUDA_HOME -u CUDA_PATH -u CUDA_ROOT \
   /path/to/build-env/bin/cmake -S native/cuda -B /path/to/build-tree -G Ninja \
   -DCMAKE_MAKE_PROGRAM=/path/to/build-env/bin/ninja \
-  -DPHX_CUDA_MAJOR=13 -DPHX_CUDA_ARCHITECTURES=native \
+  -DPHX_CUDA_ARCHITECTURES=native \
   -DPHX_CUDA_COMPONENTS=cudss \
   -DPython_EXECUTABLE=/path/to/build-env/bin/python
 /path/to/build-env/bin/cmake --build /path/to/build-tree -j2
@@ -60,13 +57,13 @@ libraries on `LD_LIBRARY_PATH`.
 Build and inspect a wheel without build isolation:
 
 ```sh
-python tools/build_cuda_wheels.py --major 13 --architectures native \
+python tools/build_cuda_wheels.py --architectures native \
   --components cudss --python /path/to/build-env/bin/python \
   --build-dir /path/to/build/cuda13 --download-dir /path/to/shared-cache \
   --wheelhouse /path/to/wheelhouse --container none --jobs 2
 ```
-`--build-dir` is required and should be reused for incremental builds of one
-CUDA major. `--download-dir` optionally shares verified archives across majors;
+`--build-dir` is required and should be reused for incremental builds.
+`--download-dir` optionally shares verified archives across build trees;
 without it, each build tree keeps its own `downloads` directory. `--jobs`
 controls parallel compilation (default 2). Container mounts use these explicit
 paths together with the wheelhouse, source tree, and supplied Python environment.
@@ -79,8 +76,10 @@ needed.
 
 
 Omit `--architectures` for release SASS coverage: CUDA 13 targets 80, 86, 89,
-90, 100, and 120, with PTX 120; CUDA 12 additionally targets 70 and 75. `native`
-is for local development and does not qualify release architecture coverage.
+90, 100, and 120, with PTX 120. `native` is for local development and does not
+qualify release architecture coverage. H100 artifacts must contain inspected
+sm90 device code; use `--architectures 90-real` for an H100-only development
+build. Runtime deployment requires an NVIDIA R580+ driver supporting CUDA 13.
 The build tool repairs with auditwheel while excluding NVIDIA and driver
 libraries, checks ELF dependencies/shared cudart/relative RUNPATHs, lists device
 code with `cuobjdump`, and writes a JSON manifest with sizes and build identity.
@@ -93,11 +92,10 @@ distributions are deliberately refused; publish wheels only.
 ## A100 hardware qualification
 
 For an A100-only artifact, select `--architectures 80-real` explicitly, not
-`native` from a build tree previously used on an RTX 5090. Use separate build
-trees and Python environments for CUDA 12 and 13:
+`native` from a build tree previously used on an RTX 5090:
 
 ```sh
-python tools/build_cuda_wheels.py --major 13 --architectures 80-real \
+python tools/build_cuda_wheels.py --architectures 80-real \
   --components cudss,amgx,quda --python /path/to/cuda13-env/bin/python \
   --build-dir /path/to/build/cuda13-sm80 --download-dir /path/to/shared-cache \
   --wheelhouse /path/to/wheelhouse13 --jobs 12
@@ -106,8 +104,7 @@ python tools/build_cuda_wheels.py --major 13 --architectures 80-real \
 Provision the companion's `build-system.requires` plus `build`, `auditwheel`,
 and `patchelf` in that environment before invoking the tool. `readelf`, a host
 C/C++ compiler, and `patch` must also be available. Set `--jobs` to the allocated
-CPU budget, not the host's total CPU count. Repeat with `--major 12` and a
-separate CUDA 12 environment/build tree when qualifying that major.
+CPU budget, not the host's total CPU count.
 
 The component build hash identifies native sources and patches, not a target
 GPU or compiler installation. Retain the wheel SHA256 and JSON build manifest
@@ -120,24 +117,26 @@ Run installed-wheel qualification with both allocated devices visible:
 
 ```sh
 CUDA_VISIBLE_DEVICES=0,1 python tools/qualify_cuda_wheels.py \
-  --major 13 --required-gpus 2 --venv /path/to/qualification-env \
+  --required-gpus 2 --venv /path/to/qualification-env \
   --phydrax-wheel /path/to/phydrax.whl --wheelhouse /path/to/wheelhouse13 \
   --evidence /path/to/cuda13-a100-qualification.json
 ```
 
-The wheelhouse must also contain the matching `phydrax-cuda-major` marker.
-The qualifier checks the required visible GPU count before running provider
-tests, records each device's kind and compute capability, and rejects skipped
-two-device coverage when `--required-gpus 2` is requested. Provider tests run
-serially: one process owns the visible GPUs rather than independent xdist
-workers racing to initialize providers on the same hardware.
+The wheelhouse must also contain the `phydrax-cuda-major` marker.
+`--required-gpus N` selects the first N visible devices and requires passing
+per-case JUnit device evidence, not just visibility. For four H100s, use
+`CUDA_VISIBLE_DEVICES=0,1,2,3` and `--required-gpus 4`. Missing, skipped, or
+partial provider or lifecycle coverage fails qualification. Provider tests run
+serially; the concurrent cuDSS scenario owns its synchronized worker threads.
 
-Two-device cuDSS and AmgX checks cover independent solves with identical plan
-identities, device-partitioned native caches, release/rebuild, and process-exit
-cleanup. They do **not** certify a distributed linear solve. QUDA remains
-one-device-per-process and must visibly refuse a second device. A100 executes
-the existing pre-SM90 active-mask warp-election branch; sm80 numerical provider
-tests are required in addition to artifact inspection. Do not run performance
+cuDSS and AmgX checks cover independent solves with identical plan identities,
+distinct numerical coefficients, device-partitioned caches, release/rebuild,
+and process-exit cleanup across all selected devices. They do **not** certify
+a distributed linear solve. QUDA scientific parity and teardown run in one
+independent process per selected GPU; packaged QUDA still refuses a second
+device in one process and a multi-process JAX runtime. A100 executes the
+pre-SM90 active-mask warp-election branch, while H100 executes the SM90 branch;
+hardware evidence remains architecture-specific. Do not run performance
 measurements concurrently with builds or correctness checks.
 
 The pinned AmgX patch owns cuBLAS and cuSPARSE handles per CUDA device, instead
@@ -155,10 +154,10 @@ component-wide release-all/shutdown sequence before process exit.
 
 ## Publishing order
 
-1. Publish `phydrax-cuda-major` versions `12.0` and `13.0` once. Never re-release
-   these immutable exclusivity markers.
-2. Publish both `phydrax-cuda12` and `phydrax-cuda13` wheels for the exact Phydrax
-   version, after GPU qualification of each delivered component on each major.
+1. Publish `phydrax-cuda-major` version `13.0` once. Never re-release this
+   immutable installed-intent marker, built from `packaging/cuda-major/13`.
+2. Publish `phydrax-cuda13` wheels for the exact Phydrax version, after GPU
+   qualification of each delivered component on CUDA 13.
 3. Only then publish the matching `phydrax` release.
 
 **Never publish Phydrax before its exact companion wheels exist.** A missing

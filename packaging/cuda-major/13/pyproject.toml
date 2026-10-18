@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "phydrax-cuda-major"
 version = "13.0"
-description = "Metadata-only marker enforcing mutually exclusive Phydrax CUDA majors"
+description = "Metadata-only marker declaring Phydrax CUDA 13 installation intent"
 license-files = ["LICENSE", "NOTICE"]
 
 [tool.hatch.build.targets.wheel]

@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Two-rank, single-host CUDA-aware MPI measurements; no RDMA claim."""
+"""Explicit N-rank, single-host CUDA-aware MPI measurements; no RDMA claim."""
 
 from __future__ import annotations
 
@@ -45,14 +45,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SIZES = (8, 1024, 65536, 1048576, 16777216, 67108864)
 
 
-def _bootstrap() -> tuple[Comm, Comm, dict[str, str]]:
+def _bootstrap(rank_count: int) -> tuple[Comm, Comm, dict[str, str]]:
     # MPI owns these ranks. Initialize it before disabling independent JAX bootstrap.
     from mpi4py import MPI
 
     keys = ("SLURM_NTASKS", "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "PMIX_SIZE")
     launch = {key: os.environ.pop(key) for key in keys if key in os.environ}
-    if MPI.COMM_WORLD.Get_size() != 2:
-        raise ValueError("CUDA MPI measurement requires exactly two MPI ranks")
+    if MPI.COMM_WORLD.Get_size() != rank_count:
+        raise ValueError(f"CUDA MPI measurement requires exactly {rank_count} MPI ranks")
     control = MPI.COMM_WORLD.Dup()
     data = MPI.COMM_WORLD.Dup()
     return control, data, launch
@@ -82,7 +82,7 @@ def _dtype(precision: Precision) -> np.dtype:
 
 
 def _operation(
-    provider: Mpi4JaxCollectiveProvider, operation: Operation, peer: int
+    provider: Mpi4JaxCollectiveProvider, operation: Operation, rank: int, rank_count: int
 ) -> Callable[[Array], Array]:
     match operation:
         case Operation.SUM:
@@ -90,7 +90,11 @@ def _operation(
         case Operation.SENDRECV:
 
             def exchange(value: Array) -> Array:
-                return provider.sendrecv(value, source=peer, destination=peer)
+                return provider.sendrecv(
+                    value,
+                    source=(rank - 1) % rank_count,
+                    destination=(rank + 1) % rank_count,
+                )
 
             return exchange
         case _:
@@ -111,6 +115,7 @@ def _check_result(
     base: np.ndarray,
     operation: Operation,
     rank: int,
+    rank_count: int,
     delta: int,
     device: jax.Device,
 ) -> None:
@@ -120,11 +125,13 @@ def _check_result(
         raise RuntimeError("MPI changed the declared output device or dtype")
     match operation:
         case Operation.SUM:
-            expected = base * np.asarray(2, dtype=base.dtype) + np.asarray(
-                1 + 2 * delta, dtype=base.dtype
-            )
+            expected = np.zeros_like(base)
+            for peer in range(rank_count):
+                expected += base + np.asarray(peer + delta, dtype=base.dtype)
         case Operation.SENDRECV:
-            expected = base + np.asarray(1 - rank + delta, dtype=base.dtype)
+            expected = base + np.asarray(
+                (rank - 1) % rank_count + delta, dtype=base.dtype
+            )
         case _:
             assert_never(operation)
     # Independent bounded host reference, outside all timed communication regions.
@@ -167,6 +174,7 @@ def _point(
         raise ValueError("Message sizes must be divisible by the declared dtype size")
     count = size_bytes // dtype.itemsize
     rank = control.Get_rank()
+    rank_count = control.Get_size()
 
     def prepare() -> tuple[np.ndarray, tuple[Array, Array]]:
         base = (np.arange(count, dtype=np.int32) % np.int32(257)).astype(dtype)
@@ -175,7 +183,7 @@ def _point(
         return base, (first, second)
 
     (base, values), prepare_seconds = measure_synchronized(prepare)
-    compiled_operation = jax.jit(_operation(provider, operation, 1 - rank))
+    compiled_operation = jax.jit(_operation(provider, operation, rank, rank_count))
     lowered, lower_seconds = measure_host(lambda: compiled_operation.lower(values[0]))
     compiled, compile_seconds = measure_host(lowered.compile)
     # The JIT dispatcher owns ordered MPI effect tokens. JAX 0.11.2's AOT
@@ -183,11 +191,11 @@ def _point(
     memory_before = _memory(device)
     control.Barrier()
     first, first_seconds = measure_synchronized(lambda: compiled_operation(values[0]))
-    _check_result(first, base, operation, rank, 0, device)
+    _check_result(first, base, operation, rank, rank_count, 0, device)
     del first
     control.Barrier()
     changed, changed_seconds = measure_synchronized(lambda: compiled_operation(values[1]))
-    _check_result(changed, base, operation, rank, 8, device)
+    _check_result(changed, base, operation, rank, rank_count, 8, device)
     del changed
     for index in range(warmup):
         control.Barrier()
@@ -209,7 +217,9 @@ def _point(
     if result is None:
         raise RuntimeError("A positive repeat count must produce an MPI result")
     memory_after = _memory(device)
-    _check_result(result, base, operation, rank, 8 * ((repeats - 1) % 2), device)
+    _check_result(
+        result, base, operation, rank, rank_count, 8 * ((repeats - 1) % 2), device
+    )
     distribution = DurationDistribution(tuple(samples))
     return {
         "operation": operation.value,
@@ -240,6 +250,7 @@ def _point(
 def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--route", type=Route, choices=tuple(Route), required=True)
+    parser.add_argument("--ranks", type=int, required=True)
     parser.add_argument("--sizes", nargs="+", type=int, default=DEFAULT_SIZES)
     parser.add_argument(
         "--precision",
@@ -265,6 +276,8 @@ def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--maximum-buffer-bytes", type=int, default=67108864)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.ranks < 2:
+        parser.error("ranks must be at least two")
     if args.repeats < 1 or args.warmup < 0:
         parser.error("repeats must be positive and warmup nonnegative")
     if not 1 <= args.maximum_buffer_bytes <= 2147483647:
@@ -281,12 +294,16 @@ def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         )
     if len(set(args.sizes)) != len(args.sizes):
         parser.error("message sizes must not repeat")
+    if len(set(args.precision)) != len(args.precision) or len(set(args.operation)) != len(
+        args.operation
+    ):
+        parser.error("precisions and operations must not repeat")
     return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _arguments(argv)
-    control, data, launch = _bootstrap()
+    control, data, launch = _bootstrap(args.ranks)
     import jax
     from mpi4py import MPI
 
@@ -300,9 +317,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     operations = tuple(parse(value, Operation, "operation") for value in args.operation)
     rank = control.Get_rank()
     devices = jax.devices("gpu")
-    if len(devices) != 2 or jax.process_count() != 1:
+    if len(devices) != args.ranks or jax.process_count() != 1:
         raise RuntimeError(
-            "Each MPI rank must see exactly two GPUs without JAX multi-host bootstrap"
+            f"Each MPI rank must see exactly {args.ranks} GPUs without JAX multi-host bootstrap"
         )
     device = devices[rank]
     shared = control.Split_type(MPI.COMM_TYPE_SHARED)
@@ -317,9 +334,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "kind": device.device_kind,
         }
     )
-    if shared_rank_count != 2 or len({item["gpu_uuid"] for item in ownership}) != 2:
+    if (
+        shared_rank_count != args.ranks
+        or len({item["gpu_uuid"] for item in ownership}) != args.ranks
+        or len({item["host"] for item in ownership}) != 1
+        or [item["rank"] for item in ownership] != list(range(args.ranks))
+    ):
         raise RuntimeError(
-            "Qualification requires one host and two distinct physical GPUs"
+            f"Qualification requires one shared-memory domain and {args.ranks} distinct physical GPUs"
         )
     provider = Mpi4JaxCollectiveProvider(
         data, "cuda-mpi-measurement", gpu_direct=route is Route.CUDA_DIRECT
@@ -350,6 +372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         root=0,
     )
+    del provider
     data.Free()
     control.Free()
     if rank == 0:
@@ -362,6 +385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "identity": identity.to_dict(),
             "configuration": {
                 "route": route.value,
+                "ranks": args.ranks,
                 "sizes": sorted(args.sizes),
                 "precision": [value.value for value in precisions],
                 "operation": [value.value for value in operations],
@@ -385,9 +409,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ranks": records,
             "scope": {
                 "hosts": 1,
-                "mpi_ranks": 2,
+                "mpi_ranks": args.ranks,
                 "shared_memory_ranks": shared_rank_count,
-                "distinct_gpus": 2,
+                "distinct_gpus": args.ranks,
                 "cuda_aware": route is Route.CUDA_DIRECT,
                 "mpi4jax_host_staging": route is Route.HOST_STAGED,
                 "zero_host_copy_claim": False,

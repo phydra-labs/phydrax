@@ -1,16 +1,15 @@
-# CUDA-major exclusivity markers
+# CUDA installed-intent marker
 
-The metadata-only `phydrax-cuda-major` distribution has versions `12.0` and
-`13.0`, built from `12/` and `13/`. It contains no Python module or CUDA code.
-Phydrax's `cuda12` and `cuda13` extras require `==12.*` and `==13.*`, respectively.
-These incompatible requirements enforce exclusivity in published wheel metadata
-for pip and uv on every platform, independently of development-only uv settings.
+The metadata-only `phydrax-cuda-major` distribution has version `13.0`, built
+from `13/`. It contains no Python module or CUDA code. Phydrax's `cuda13` extra
+requires `==13.*`, recording explicit installed CUDA intent for diagnostics
+even before a CUDA backend is initialized. CUDA 13 is the only supported major;
+the marker is not a CUDA runtime or driver.
 
-Publish both marker wheels to the package index **before** publishing any Phydrax
-release that references them. Build each with `uv build --wheel` from its marker
-directory. Never re-release, replace, or repurpose either marker version; their
-meaning is permanent. Future CUDA majors require a new marker version.
+Publish the marker wheel to the package index **before** publishing a Phydrax
+release that references it. Build it with `uv build --wheel` from `13/`.
+Never re-release, replace, or repurpose this marker version.
 
-Each marker includes the repository's Phydra Non-Production License and the
+The marker includes the repository's Phydra Non-Production License and the
 required license notice. The release gate `tools/check_cuda_extras.py` builds
-these wheels locally and supplies them through `--find-links` before publication.
+the wheel locally and supplies it through `--find-links` before publication.

@@ -158,8 +158,8 @@ report `MPIX_Query_cuda_support() == 1`. Use a site CUDA-aware MPI and build bot
 mpi4py and mpi4jax against that installation's `mpicc`; use its matching
 `mpirun`, not a launcher from another MPI installation. Ordinary PyPI MPI wheels
 are built without CUDA support and may shadow the site's MPI. The mpi4jax CUDA
-bridge must match JAX's CUDA major and is checked before import, even for
-host-staged use. See the [verified CUDA 13 build recipe](../installation.md#gpu-direct-mpi-interoperability)
+bridge must match the supported CUDA 13 JAX stack and is checked before import,
+even for host-staged use. See the [CUDA 13 build recipe](../installation.md#gpu-direct-mpi-interoperability)
 using a `CUDA_ROOT` toolkit view, an explicit NVIDIA-wheel RPATH, and
 `uv pip install --no-cache --no-build-isolation --reinstall mpi4jax`.
 MPI libraries must remain discoverable through RPATH or the deployment's library
@@ -173,7 +173,30 @@ Rank-local MPI does not require JAX multi-host initialization; avoid enabling
 the independent launcher-detected Phydrax/JAX distributed bootstrap when both
 ranks deliberately share one GPU. Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` for
 that deployment. The CUDA MPI integration test accepts a matching launcher
-(and deployment-specific flags) through `PHYDRAX_MPI_LAUNCHER`.
+(and deployment-specific flags) through `PHYDRAX_MPI_LAUNCHER`, and the requested
+rank count through `PHYDRAX_MPI_RANKS` (default `2`).
+
+`tools.qualify_cuda_mpi --visible-devices 0,1,2,3 ...` requests four ranks, not a
+two-rank subset of four visible devices. Any explicit allocation of at least two
+devices is supported by the qualification harness. Each rank must see the exact
+allocation; the distinct-GPU cases require unique physical CUDA UUIDs and one
+MPI shared-memory domain. The full distinct/shared placement × direct/staged
+transport × float32/float64 matrix must pass without skips for that rank count.
+The deliberately shared-GPU cases exercise compatibility and are never physical
+multi-GPU evidence. Exchanges form a ring (receive from the previous rank, send
+to the next); collective references include every rank. Both communicator
+generations, supported AD paths, and unsupported-transform refusals are checked.
+
+`benchmarks.cuda_mpi` requires an explicit matching `--ranks N`. Measurements
+validate every rank's ownership and complete point/sample sets, then aggregate
+the maximum of corresponding synchronized samples, never the maximum of rank
+medians. Optional profiling is a separate workload with one bounded artifact
+per requested rank (512 MiB each, `N × 512 MiB` total); instrumented timings are
+not performance evidence. These are single-host CUDA-aware MPI checks, not
+claims of network RDMA or absence of MPI-internal host staging.
+The qualifier forwards and records an explicitly supplied `NCCL_NVLS_ENABLE`
+deployment setting without selecting a default or retry fallback; MPI/UCX
+measurements do not establish NCCL transport support.
 
 The pinned mpi4jax transformation contract is narrower than a generic transpose
 of stacked rank outputs: SUM JVP reduces tangents, while SUM VJP returns the
@@ -264,9 +287,9 @@ CUDA device and later calls on another device are refused.
 When unset, `QUDA_RESOURCE_PATH` defaults to
 `$XDG_CACHE_HOME/phydrax/quda/<build hash>/<QUDA variant>` (using `~/.cache` when
 `XDG_CACHE_HOME` is unset). The variant is QUDA's own tune-cache key (CPU
-architecture, compiled GPU architectures, CUDA compiler version), so CUDA 12 and
-CUDA 13 companions, or development and release builds, never share a tune cache
-that QUDA would reject. An explicit resource path is preserved. The owned exit
+architecture, compiled GPU architectures, CUDA compiler version), so development
+and release builds never share a tune cache that QUDA would reject. An explicit
+resource path is preserved. The owned exit
 handler calls `endQuda`.
 
 CPU adapters explicitly transfer arrays to their host runtime. External adapters
@@ -373,7 +396,7 @@ constraint-dual values with their canonical signs.
 
 ## cuDSS (native)
 
-The Linux x86-64 CUDA companions provide cuDSS for both `phydrax[cuda12]` and
+The Linux x86-64 CUDA 13 companion provides cuDSS through
 `phydrax[cuda13]`. Inspect `cudss_availability`, then select
 `SparseLDLT(provider="cudss", factor_cache_capacity=8)` explicitly.
 Importing Phydrax does not load the companion or initialize CUDA.
