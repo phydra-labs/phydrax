@@ -252,8 +252,12 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -
 
 @pytest.mark.parametrize(
     ("name", "first", "second"),
-    [("NPROC", "3", "4"), ("NCCL_NVLS_ENABLE", "0", "1")],
-    ids=["cpu-workers", "nvls"],
+    [
+        ("NPROC", "3", "4"),
+        ("NCCL_NVLS_ENABLE", "0", "1"),
+        ("NCCL_P2P_DISABLE", "0", "1"),
+    ],
+    ids=["cpu-workers", "nvls", "peer-transport"],
 )
 def test_performance_configuration_changes_environment_identity(
     monkeypatch: pytest.MonkeyPatch, name: str, first: str, second: str

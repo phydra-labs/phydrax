@@ -152,6 +152,80 @@ cuDSS and AmgX preparations remain single-device solves with device-isolated
 caches, not distributed sparse solvers. Packaged QUDA requires one JAX process
 and refuses a second device within that process.
 
+### Check PCIe peer-transfer integrity
+
+Device visibility and `cuda_environment().successful` do not verify inter-GPU
+data movement. Before qualifying a new multi-GPU host, verify peer-copy contents,
+not just CUDA return codes or `nvidia-smi topo -p2p` capability reports:
+
+```python
+import jax
+import numpy as np
+
+devices = jax.devices("gpu")
+expected = np.arange(1, 17, dtype=np.float32)
+for source in devices:
+    value = jax.device_put(expected, source)
+    for target in devices:
+        if target != source:
+            observed = np.asarray(jax.device_put(value, target))
+            np.testing.assert_array_equal(
+                observed, expected, err_msg=f"{source} -> {target}"
+            )
+```
+
+On the four RTX PRO 6000 Blackwell Server Edition host (sm120, driver
+595.91.07), all four devices initialize with JAX/JAXlib 0.11.2 and CUDA 13.4.
+However, all twelve directed peer-copy pairs corrupt data in an independent
+CUDA-runtime probe despite successful API returns. Raw JAX device copies also
+corrupt data, and the default four-GPU NCCL collective hangs. The kernel command
+line includes `intel_iommu=on`, and all four GPUs have translated `DMA-FQ`
+IOMMU domains. This matches the configuration implicated by NVIDIA's documented
+[Linux bare-metal IOMMU/PCIe P2P failure mode](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting/gpu_troubleshooting.html.md#troubleshooting-iommu-p2p);
+the host operator must inspect and repair that configuration.
+
+Do not qualify general multi-GPU execution on this host until the host operator
+repairs the IOMMU/ACS/driver configuration and peer-copy integrity passes.
+Do not change virtualization or isolation settings blindly from a container.
+`NCCL_P2P_DISABLE=1` changes NCCL transport only; it does **not** repair JAX
+device-to-device copies. A host-origin, four-device raw-JAX reduction and the
+four-process/one-GPU-per-process substrate smoke pass with that explicit setting.
+The two-process/two-GPUs-per-process launch still aborts. These bounded results
+do not qualify arbitrary single-process multi-GPU workflows, GPU-direct MPI,
+or peer transfers.
+
+```bash
+env -u LD_LIBRARY_PATH NCCL_P2P_DISABLE=1 \
+  XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  .venv/bin/python -m tools.distributed_substrate_benchmark \
+  --local-processes 4 --devices-per-process 1 --size 1024 --iterations 1
+```
+
+Benchmark environment fingerprints include `NCCL_P2P_DISABLE`, and the substrate
+smoke reports it explicitly. Peer-enabled and peer-disabled measurements are not
+interchangeable. This PCIe host does not inherit the H100 NVSwitch deployment
+profile below.
+
+The local companion was built with `--architectures 120-real` and all three
+components. Its inspected AmgX/QUDA SASS is sm120-only; the wheel targets
+manylinux_2_39 and is not a full release-architecture artifact. cuDSS, AmgX,
+and QUDA numerical checks pass on each of the four GPUs in independent
+single-GPU processes. Installed-wheel clean and hostile-library-path audits
+map only CUDA 13 wheel libraries; the hostile audit reports the expected
+`library-path-shadowing` warning. Compiled MACE and FMM correctness checks also
+pass on one GPU. The full `--required-gpus 4` native qualification timed out and
+is **not** claimed as passed. `benchmarks/rtx_pro_6000_qualification.json` retains
+the artifact identities, exact verification scopes, and failed peer-transfer
+evidence.
+
+From this checkout, keep the audited development wheel rather than rebuilding
+the companion implicitly:
+
+```bash
+uv pip install --python .venv/bin/python --no-sources \
+  --find-links dist/cuda13-sm120 -e ".[cuda13]"
+```
+
 ### Four-H100 deployment profile
 
 The four-H100 SXM deployment uses driver 580.126.09, JAX/JAXlib 0.11.2, CUDA

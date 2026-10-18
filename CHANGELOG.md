@@ -84,6 +84,15 @@
   for native cuDSS on Linux x86-64.
 
 ### Fixed
+- Include `NCCL_P2P_DISABLE` in benchmark environment identities and distributed
+  substrate smoke reports so peer-enabled and host-staged transport evidence
+  cannot share an environment fingerprint. Document the four-RTX-PRO-6000
+  host's independently reproduced PCIe peer-copy corruption, the required
+  host-level repair, and the limited explicit non-P2P smoke result; GPU
+  visibility is not multi-GPU qualification.
+- Remove the remaining CUDA 12 dependency claim from the AmgX benchmark adapter
+  and align the atomistic API guide with the architecture-specific CUDA
+  admission and compiled correctness evidence.
 - Bind halo reference checks to their selected devices and add real four-device
   halo, spectral pencil/slab, block-AMR, and native-JAX MACE reference coverage.
 - Include the explicit `NCCL_NVLS_ENABLE` setting in benchmark environment

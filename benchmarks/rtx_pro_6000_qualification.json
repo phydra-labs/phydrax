@@ -1,0 +1,1938 @@
+{
+  "base_commit": "3958206b5",
+  "changed_python_sha256": {
+    "benchmarks/_runtime.py": "b1fd15b8b55a8f3f722f4b991080c6542d3f79d233478f73f3638e9a90740458",
+    "benchmarks/advanced_solvers/adapters/amgx.py": "0a0cc951b25455a454cd4970f43298c7be2b59d41ab77ad1a3fe2b0baf781d9c",
+    "tests/unit/test_benchmark_runtime.py": "5fb1b0d4c8ae83c1e1628ba45900dcc0f6ca47cde9ea627ada425e68021c75b0",
+    "tools/distributed_substrate_benchmark.py": "aa0f16df73f518dbcc10c14a1708ae626326967d0548ac99e4d31388e451a91f"
+  },
+  "completed_at": "2026-10-18T19:47:46.984245+00:00",
+  "cuda_extra_resolution": {
+    "builds": [
+      {
+        "command": [
+          "uv",
+          "build",
+          "--wheel",
+          "--out-dir",
+          "/phydrax/.tmp/cuda13-extras/markers/13",
+          "/phydrax/packaging/cuda-major/13"
+        ],
+        "returncode": 0,
+        "stderr": "Building wheel...\nSuccessfully built .tmp/cuda13-extras/markers/13/phydrax_cuda_major-13.0-py2.py3-none-any.whl\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "uv",
+          "build",
+          "--wheel",
+          "--out-dir",
+          "/phydrax/.tmp/cuda13-extras/phydrax",
+          "/phydrax"
+        ],
+        "returncode": 0,
+        "stderr": "Building wheel...\nSuccessfully built .tmp/cuda13-extras/phydrax/phydrax-0.2.2-py3-none-any.whl\n",
+        "stdout": ""
+      }
+    ],
+    "cases": [
+      {
+        "command": {
+          "command": [
+            "uv",
+            "pip",
+            "compile",
+            "--no-config",
+            "--python-platform",
+            "x86_64-manylinux_2_39",
+            "--python-version",
+            "3.12",
+            "--find-links",
+            "/phydrax/.tmp/cuda13-extras/markers/13",
+            "--find-links",
+            "/phydrax/dist/cuda13-sm120",
+            "--no-header",
+            "--no-annotate",
+            "-"
+          ],
+          "returncode": 0,
+          "stderr": "Resolved 51 packages in 190ms\n",
+          "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ncuda-toolkit==13.4.3\ndiffrax==0.7.2\nequinox==0.13.8\nh5py==3.16.0\njax==0.11.2\njax-cuda13-pjrt==0.11.2\njax-cuda13-plugin==0.11.2\njaxlib==0.11.2\njaxtyping==0.3.11\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nnvidia-cublas==13.8.0.4\nnvidia-cuda-cccl==13.3.4.3.1\nnvidia-cuda-crt==13.4.92\nnvidia-cuda-cupti==13.4.92\nnvidia-cuda-nvcc==13.4.92\nnvidia-cuda-nvrtc==13.4.92\nnvidia-cuda-runtime==13.4.92\nnvidia-cudnn-cu13==9.27.0.42\nnvidia-cudss-cu13==0.8.0.10\nnvidia-cufft==12.4.0.43\nnvidia-curand==10.4.4.72\nnvidia-cusolver==12.3.5.3\nnvidia-cusparse==12.8.6.72\nnvidia-nccl-cu13==2.32.3\nnvidia-nvjitlink==13.4.92\nnvidia-nvshmem-cu13==3.8.0\nnvidia-nvvm==13.4.92\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///phydrax/.tmp/cuda13-extras/phydrax/phydrax-0.2.2-py3-none-any.whl\nphydrax-cuda-major==13.0\nphydrax-cuda13==0.2.2\npygments==2.21.0\npyyaml==6.0.3\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntyping-extensions==4.16.0\nwadler-lindig==0.1.7\n"
+        },
+        "errors": [],
+        "extras": "cuda13",
+        "platform": "x86_64-manylinux_2_39",
+        "resolved_nvidia": {
+          "nvidia-cublas": "13.8.0.4",
+          "nvidia-cuda-cccl": "13.3.4.3.1",
+          "nvidia-cuda-crt": "13.4.92",
+          "nvidia-cuda-cupti": "13.4.92",
+          "nvidia-cuda-nvcc": "13.4.92",
+          "nvidia-cuda-nvrtc": "13.4.92",
+          "nvidia-cuda-runtime": "13.4.92",
+          "nvidia-cudnn-cu13": "9.27.0.42",
+          "nvidia-cudss-cu13": "0.8.0.10",
+          "nvidia-cufft": "12.4.0.43",
+          "nvidia-curand": "10.4.4.72",
+          "nvidia-cusolver": "12.3.5.3",
+          "nvidia-cusparse": "12.8.6.72",
+          "nvidia-nccl-cu13": "2.32.3",
+          "nvidia-nvjitlink": "13.4.92",
+          "nvidia-nvshmem-cu13": "3.8.0",
+          "nvidia-nvvm": "13.4.92"
+        },
+        "resolved_nvidia_majors": {
+          "nvidia-cublas": 13,
+          "nvidia-cuda-cccl": 13,
+          "nvidia-cuda-crt": 13,
+          "nvidia-cuda-cupti": 13,
+          "nvidia-cuda-nvcc": 13,
+          "nvidia-cuda-nvrtc": 13,
+          "nvidia-cuda-runtime": 13,
+          "nvidia-cudnn-cu13": 13,
+          "nvidia-cudss-cu13": 13,
+          "nvidia-cufft": 13,
+          "nvidia-curand": 13,
+          "nvidia-cusolver": 13,
+          "nvidia-cusparse": 13,
+          "nvidia-nccl-cu13": 13,
+          "nvidia-nvjitlink": 13,
+          "nvidia-nvshmem-cu13": 13,
+          "nvidia-nvvm": 13
+        },
+        "successful": true
+      },
+      {
+        "command": {
+          "command": [
+            "uv",
+            "pip",
+            "compile",
+            "--no-config",
+            "--python-platform",
+            "aarch64-manylinux_2_39",
+            "--python-version",
+            "3.12",
+            "--find-links",
+            "/phydrax/.tmp/cuda13-extras/markers/13",
+            "--find-links",
+            "/phydrax/dist/cuda13-sm120",
+            "--no-header",
+            "--no-annotate",
+            "-"
+          ],
+          "returncode": 0,
+          "stderr": "Resolved 47 packages in 105ms\n",
+          "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ndiffrax==0.7.2\nequinox==0.13.8\nh5py==3.16.0\njax==0.11.2\njax-cuda13-pjrt==0.11.2\njax-cuda13-plugin==0.11.2\njaxlib==0.11.2\njaxtyping==0.3.11\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nnvidia-cublas==13.8.1.7\nnvidia-cuda-cccl==13.3.4.3.1\nnvidia-cuda-crt==13.4.92\nnvidia-cuda-cupti==13.4.92\nnvidia-cuda-nvcc==13.4.92\nnvidia-cuda-nvrtc==13.4.92\nnvidia-cuda-runtime==13.4.92\nnvidia-cudnn-cu13==9.27.0.42\nnvidia-cufft==12.4.0.43\nnvidia-cusolver==12.3.5.3\nnvidia-cusparse==12.8.6.72\nnvidia-nccl-cu13==2.32.3\nnvidia-nvjitlink==13.4.92\nnvidia-nvshmem-cu13==3.8.0\nnvidia-nvvm==13.4.92\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///phydrax/.tmp/cuda13-extras/phydrax/phydrax-0.2.2-py3-none-any.whl\nphydrax-cuda-major==13.0\npygments==2.21.0\npyyaml==6.0.3\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntyping-extensions==4.16.0\nwadler-lindig==0.1.7\n"
+        },
+        "errors": [],
+        "extras": "cuda13",
+        "platform": "aarch64-manylinux_2_39",
+        "resolved_nvidia": {
+          "nvidia-cublas": "13.8.1.7",
+          "nvidia-cuda-cccl": "13.3.4.3.1",
+          "nvidia-cuda-crt": "13.4.92",
+          "nvidia-cuda-cupti": "13.4.92",
+          "nvidia-cuda-nvcc": "13.4.92",
+          "nvidia-cuda-nvrtc": "13.4.92",
+          "nvidia-cuda-runtime": "13.4.92",
+          "nvidia-cudnn-cu13": "9.27.0.42",
+          "nvidia-cufft": "12.4.0.43",
+          "nvidia-cusolver": "12.3.5.3",
+          "nvidia-cusparse": "12.8.6.72",
+          "nvidia-nccl-cu13": "2.32.3",
+          "nvidia-nvjitlink": "13.4.92",
+          "nvidia-nvshmem-cu13": "3.8.0",
+          "nvidia-nvvm": "13.4.92"
+        },
+        "resolved_nvidia_majors": {
+          "nvidia-cublas": 13,
+          "nvidia-cuda-cccl": 13,
+          "nvidia-cuda-crt": 13,
+          "nvidia-cuda-cupti": 13,
+          "nvidia-cuda-nvcc": 13,
+          "nvidia-cuda-nvrtc": 13,
+          "nvidia-cuda-runtime": 13,
+          "nvidia-cudnn-cu13": 13,
+          "nvidia-cufft": 13,
+          "nvidia-cusolver": 13,
+          "nvidia-cusparse": 13,
+          "nvidia-nccl-cu13": 13,
+          "nvidia-nvjitlink": 13,
+          "nvidia-nvshmem-cu13": 13,
+          "nvidia-nvvm": 13
+        },
+        "successful": true
+      },
+      {
+        "command": {
+          "command": [
+            "uv",
+            "pip",
+            "compile",
+            "--no-config",
+            "--python-platform",
+            "aarch64-apple-darwin",
+            "--python-version",
+            "3.12",
+            "--find-links",
+            "/phydrax/.tmp/cuda13-extras/markers/13",
+            "--find-links",
+            "/phydrax/dist/cuda13-sm120",
+            "--no-header",
+            "--no-annotate",
+            "-"
+          ],
+          "returncode": 0,
+          "stderr": "Resolved 30 packages in 120ms\n",
+          "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ndiffrax==0.7.2\nequinox==0.13.8\nh5py==3.16.0\njax==0.11.2\njaxlib==0.11.2\njaxtyping==0.3.11\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///phydrax/.tmp/cuda13-extras/phydrax/phydrax-0.2.2-py3-none-any.whl\nphydrax-cuda-major==13.0\npygments==2.21.0\npyyaml==6.0.3\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntyping-extensions==4.16.0\nwadler-lindig==0.1.7\n"
+        },
+        "errors": [],
+        "extras": "cuda13",
+        "platform": "aarch64-apple-darwin",
+        "resolved_nvidia": {},
+        "resolved_nvidia_majors": {},
+        "successful": true
+      },
+      {
+        "command": {
+          "command": [
+            "uv",
+            "pip",
+            "compile",
+            "--no-config",
+            "--python-platform",
+            "x86_64-pc-windows-msvc",
+            "--python-version",
+            "3.12",
+            "--find-links",
+            "/phydrax/.tmp/cuda13-extras/markers/13",
+            "--find-links",
+            "/phydrax/dist/cuda13-sm120",
+            "--no-header",
+            "--no-annotate",
+            "-"
+          ],
+          "returncode": 0,
+          "stderr": "Resolved 32 packages in 77ms\n",
+          "stdout": "absl-py==2.5.1\nblackjax==1.7.1\ncadquery-ocp-novtk==8.0.1.1.0\ncadquery-ocp-proxy==8.0.1.1.0\ncolorama==0.4.6\ndiffrax==0.7.2\nequinox==0.13.8\nh5py==3.16.0\njax==0.11.2\njaxlib==0.11.2\njaxtyping==0.3.11\nlineax==0.1.1\nloguru==0.7.3\nmarkdown-it-py==4.2.0\nmdurl==0.1.2\nmeshio==5.3.5\nml-dtypes==0.6.0\nmpmath==1.4.1\nnumpy==2.5.4\nopt-einsum==3.4.0\noptax==0.2.8\noptimistix==0.1.0\nphydrax @ file:///phydrax/.tmp/cuda13-extras/phydrax/phydrax-0.2.2-py3-none-any.whl\nphydrax-cuda-major==13.0\npygments==2.21.0\npyyaml==6.0.3\nrich==15.0.0\ns2fft==1.5.0\nscipy==1.18.1\ntyping-extensions==4.16.0\nwadler-lindig==0.1.7\nwin32-setctime==1.2.0\n"
+        },
+        "errors": [],
+        "extras": "cuda13",
+        "platform": "x86_64-pc-windows-msvc",
+        "resolved_nvidia": {},
+        "resolved_nvidia_majors": {},
+        "successful": true
+      }
+    ],
+    "completed_at": "2026-10-18T19:12:50.523693+00:00",
+    "errors": [],
+    "metadata_errors": [],
+    "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+    "successful": true,
+    "timestamp": "2026-10-18T19:12:43.171543+00:00",
+    "uv": "uv 0.9.0"
+  },
+  "hardware": {
+    "compute_capability": "12.0",
+    "driver": "595.91.07",
+    "driver_cuda_version": "13.2",
+    "gpu_count": 4,
+    "gpu_kind": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_pci_bus_ids": [
+      "0000:3d:00.0",
+      "0000:3e:00.0",
+      "0000:4e:00.0",
+      "0000:cd:00.0"
+    ],
+    "interconnect": "PCIe PIX/NODE/SYS; no NVLink",
+    "iommu_domains": {
+      "0000:3d:00.0": "DMA-FQ",
+      "0000:3e:00.0": "DMA-FQ",
+      "0000:4e:00.0": "DMA-FQ",
+      "0000:cd:00.0": "DMA-FQ"
+    },
+    "kernel": "7.0.0-28-generic",
+    "kernel_command_line": "BOOT_IMAGE=/vmlinuz-7.0.0-28-generic root=UUID=3a00d925-9cf7-42ae-8ca4-a3231ce8793c ro intel_iommu=on pci=relaxed_ordering pcie_aspm=off console=tty0 console=ttyS0,115200n8 console=ttyS1,115200n8 console=tty0 console=ttyS0,115200n8 console=ttyS1,115200n8",
+    "memory_mib_per_gpu": 97887
+  },
+  "host_actions_required": [
+    "A host administrator must correct the GPU IOMMU/ACS/driver configuration. All allocated GPU IOMMU domains currently report DMA-FQ.",
+    "After the host repair/reboot, rerun all directed peer-copy integrity checks before default NCCL, 1x4/2x2/4x1 layouts, native multi-device lifecycle qualification, or scaling campaigns.",
+    "Provide a matching site CUDA-aware MPI/UCX stack for optional GPU-direct MPI qualification."
+  ],
+  "installed_wheel_audits": {
+    "clean": {
+      "cwd": "/tmp",
+      "physical_device": 1,
+      "python": "/phydrax/.tmp/cuda13-qualification/bin/python",
+      "report": {
+        "build_hashes": {
+          "amgx": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+          "cudss": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+          "quda": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5"
+        },
+        "compute_capability": "12.0",
+        "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "devices": [
+          {
+            "compute_capability": "12.0",
+            "id": 0,
+            "kind": "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+          }
+        ],
+        "driver_version": [
+          13,
+          2
+        ],
+        "failures": [],
+        "issues": [],
+        "jax": "0.11.2",
+        "mapped": [
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+            "soname": "libcublas.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "soname": "libcublasLt.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "soname": "libcudart.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudss.so.0",
+            "soname": "libcudss.so.0"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcufft.so.12",
+            "soname": "libcufft.so.12"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcupti.so.13",
+            "soname": "libcupti.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusolver.so.12",
+            "soname": "libcusolver.so.12"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusparse.so.12",
+            "soname": "libcusparse.so.12"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libnvJitLink.so.13",
+            "soname": "libnvJitLink.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libnvrtc.so.13",
+            "soname": "libnvrtc.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn.so.9",
+            "soname": "libcudnn.so.9"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_graph.so.9",
+            "soname": "libcudnn_graph.so.9"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so.2",
+            "soname": "libnccl.so.2"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/nvshmem/lib/libnvshmem_host.so.3",
+            "soname": "libnvshmem_host.so.3"
+          }
+        ],
+        "preloaded": {
+          "amgx": [
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusparse.so.12",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libnvJitLink.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusolver.so.12"
+          ],
+          "cudss": [
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudss.so.0"
+          ],
+          "quda": [
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13"
+          ]
+        },
+        "required_gpus": 1,
+        "residual": 1.1920928955078125e-07,
+        "runtime_version": [
+          13,
+          4
+        ],
+        "successful_report": true
+      },
+      "required_gpus": 1
+    },
+    "hostile": {
+      "cwd": "/tmp",
+      "physical_device": 1,
+      "python": "/phydrax/.tmp/cuda13-qualification/bin/python",
+      "report": {
+        "build_hashes": {
+          "amgx": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+          "cudss": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+          "quda": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5"
+        },
+        "compute_capability": "12.0",
+        "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "devices": [
+          {
+            "compute_capability": "12.0",
+            "id": 0,
+            "kind": "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+          }
+        ],
+        "driver_version": [
+          13,
+          2
+        ],
+        "failures": [],
+        "issues": [
+          "library-path-shadowing"
+        ],
+        "jax": "0.11.2",
+        "mapped": [
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+            "soname": "libcublas.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "soname": "libcublasLt.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "soname": "libcudart.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudss.so.0",
+            "soname": "libcudss.so.0"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcufft.so.12",
+            "soname": "libcufft.so.12"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcupti.so.13",
+            "soname": "libcupti.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusolver.so.12",
+            "soname": "libcusolver.so.12"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusparse.so.12",
+            "soname": "libcusparse.so.12"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libnvJitLink.so.13",
+            "soname": "libnvJitLink.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libnvrtc.so.13",
+            "soname": "libnvrtc.so.13"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn.so.9",
+            "soname": "libcudnn.so.9"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_graph.so.9",
+            "soname": "libcudnn_graph.so.9"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so.2",
+            "soname": "libnccl.so.2"
+          },
+          {
+            "major": 13,
+            "path": "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/nvshmem/lib/libnvshmem_host.so.3",
+            "soname": "libnvshmem_host.so.3"
+          }
+        ],
+        "preloaded": {
+          "amgx": [
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusparse.so.12",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libnvJitLink.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcusolver.so.12"
+          ],
+          "cudss": [
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudss.so.0"
+          ],
+          "quda": [
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+            "/phydrax/.tmp/cuda13-qualification/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13"
+          ]
+        },
+        "required_gpus": 1,
+        "residual": 1.1920928955078125e-07,
+        "runtime_version": [
+          13,
+          4
+        ],
+        "successful_report": true
+      },
+      "required_gpus": 1
+    }
+  },
+  "launches": [
+    {
+      "command": ".venv/bin/python -m tools.distributed_substrate_benchmark --size 1024 --iterations 3",
+      "environment": {
+        "JAX_PLATFORMS": "cuda",
+        "LD_LIBRARY_PATH": null,
+        "NCCL_NVLS_ENABLE": null,
+        "NCCL_P2P_DISABLE": null,
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+      },
+      "layout": "1x4",
+      "result": "timed out after 180 seconds"
+    },
+    {
+      "command": ".venv/bin/python -m tools.distributed_substrate_benchmark --local-processes 4 --devices-per-process 1 --size 1024 --iterations 1",
+      "environment": {
+        "JAX_PLATFORMS": "cuda",
+        "LD_LIBRARY_PATH": null,
+        "NCCL_NVLS_ENABLE": null,
+        "NCCL_P2P_DISABLE": "1",
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+      },
+      "layout": "4x1",
+      "local_hardware_ids_by_process": [
+        [
+          0
+        ],
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ]
+      ],
+      "mean_absolute_error": 0.0,
+      "pcg_converged": true,
+      "pcg_maximum_solution_error": 1.1102230246251565e-16,
+      "performance_qualification": false,
+      "report": {
+        "distributed_pcg": {
+          "converged": true,
+          "iterations": 1,
+          "maximum_solution_error": 1.1102230246251565e-16,
+          "seconds": 1.0791799540165812
+        },
+        "problem": {
+          "group_identity_consistent": true,
+          "iterations": 1,
+          "logical_size": 1024,
+          "padded_size": 1024,
+          "qualification": "bootstrap-and-collective-smoke"
+        },
+        "resource_admission": {
+          "admitted": true,
+          "execution_plan_id": "226687c33d9d53f30c3856d9e4e947b9b5dd89a02ff983948a3df345a0dc0e5d",
+          "group_id": "e0258840e0c4b3d28fb69b0a4720d79604af9103f864d2aa2398561d1facc6f8",
+          "memory_envelope": "declared",
+          "request": {
+            "accelerator_count": 4,
+            "accelerator_platform": null,
+            "accelerator_vendor": null,
+            "cpu_cores": 1,
+            "exclusive": true,
+            "host_count": 1,
+            "memory_bytes": 131072,
+            "minimum_accelerator_memory_bytes": null,
+            "process_count": 4
+          }
+        },
+        "runtime": {
+          "execution_group_id": "e0258840e0c4b3d28fb69b0a4720d79604af9103f864d2aa2398561d1facc6f8",
+          "global_device_count": 4,
+          "inventory_id": "42d0553c66f116d0d3e35d8588962794bbe077e5b0cb72685bcb1a94bc707b77",
+          "local_device_count": 1,
+          "local_hardware_ids_by_process": [
+            [
+              0
+            ],
+            [
+              1
+            ],
+            [
+              2
+            ],
+            [
+              3
+            ]
+          ],
+          "nccl_nvls_enable": null,
+          "platforms": [
+            "gpu"
+          ],
+          "process_count": 4,
+          "process_host_ids": [
+            [
+              0,
+              "linux-boot-41c25c41-ab94-46cf-a576-e71b6d55994a"
+            ],
+            [
+              1,
+              "linux-boot-41c25c41-ab94-46cf-a576-e71b6d55994a"
+            ],
+            [
+              2,
+              "linux-boot-41c25c41-ab94-46cf-a576-e71b6d55994a"
+            ],
+            [
+              3,
+              "linux-boot-41c25c41-ab94-46cf-a576-e71b6d55994a"
+            ]
+          ],
+          "process_index": 0
+        },
+        "weighted_mean": {
+          "absolute_error": 0.0,
+          "expected": 0.5,
+          "observed": 0.5,
+          "seconds": 0.018504532985389233
+        }
+      },
+      "result": "passed bootstrap, disjoint ownership, resource admission, weighted mean and PCG smoke"
+    },
+    {
+      "command": ".venv/bin/python -m tools.distributed_substrate_benchmark --local-processes 2 --devices-per-process 2 --size 17 --iterations 1",
+      "environment": {
+        "JAX_PLATFORMS": "cuda",
+        "LD_LIBRARY_PATH": null,
+        "NCCL_NVLS_ENABLE": null,
+        "NCCL_P2P_DISABLE": "1",
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+      },
+      "layout": "2x2",
+      "result": "LocalProcessLaunchError: rank 0 exited -6 (stderr_bytes=2635); rank 1 exited -6 (stderr_bytes=2635)"
+    },
+    {
+      "command": ".venv/bin/python -m tools.distributed_substrate_benchmark --size 17 --iterations 1",
+      "environment": {
+        "CUDA_VISIBLE_DEVICES": "2",
+        "JAX_PLATFORMS": "cuda",
+        "LD_LIBRARY_PATH": null,
+        "NCCL_P2P_DISABLE": "1",
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+      },
+      "layout": "1x1",
+      "mean_absolute_error": 0.0,
+      "pcg_converged": true,
+      "pcg_maximum_solution_error": 0.0,
+      "performance_qualification": false,
+      "physical_device": 2,
+      "report": {
+        "distributed_pcg": {
+          "converged": true,
+          "iterations": 1,
+          "maximum_solution_error": 0.0,
+          "seconds": 0.3366327730473131
+        },
+        "problem": {
+          "group_identity_consistent": true,
+          "iterations": 1,
+          "logical_size": 17,
+          "padded_size": 17,
+          "qualification": "bootstrap-and-collective-smoke"
+        },
+        "resource_admission": {
+          "admitted": true,
+          "execution_plan_id": "4a7ab52c538872eb358beaf2b55eabc7798489e62c5605568e5aa394883bc274",
+          "group_id": "8ef99140b0da48634bc8caf280454e32e1ea0e8d90202c6744cef312b36fd273",
+          "memory_envelope": "declared",
+          "request": {
+            "accelerator_count": 1,
+            "accelerator_platform": null,
+            "accelerator_vendor": null,
+            "cpu_cores": 1,
+            "exclusive": true,
+            "host_count": 1,
+            "memory_bytes": 2176,
+            "minimum_accelerator_memory_bytes": null,
+            "process_count": 1
+          }
+        },
+        "runtime": {
+          "execution_group_id": "8ef99140b0da48634bc8caf280454e32e1ea0e8d90202c6744cef312b36fd273",
+          "global_device_count": 1,
+          "inventory_id": "70b6c8ad465b5c4636bb5d9f455d1e6f3a20e99818517dcdab4531a3a8f1a63c",
+          "local_device_count": 1,
+          "local_hardware_ids_by_process": [
+            [
+              0
+            ]
+          ],
+          "nccl_nvls_enable": null,
+          "nccl_p2p_disable": "1",
+          "platforms": [
+            "gpu"
+          ],
+          "process_count": 1,
+          "process_host_ids": [],
+          "process_index": 0
+        },
+        "weighted_mean": {
+          "absolute_error": 0.0,
+          "expected": 0.5,
+          "observed": 0.5,
+          "seconds": 0.00564100407063961
+        }
+      },
+      "result": "passed; runtime.nccl_p2p_disable reports 1"
+    }
+  ],
+  "limitations": [
+    "All twelve directed CUDA-runtime peer copies returned success but wrong contents.",
+    "Raw JAX GPU0-to-GPU1 copies returned zeros instead of values 1 through 8.",
+    "Default four-GPU substrate smoke timed out at 180 seconds; independent raw-JAX NCCL reduction timed out at 90 seconds.",
+    "NCCL_P2P_DISABLE=1 is not a repair for JAX peer copies; no automatic transport fallback was added.",
+    "No site CUDA-aware MPI/UCX stack or Nsight Systems is provisioned; GPU-direct MPI and profiling remain unqualified.",
+    "No multi-host or RDMA qualification."
+  ],
+  "native_build": {
+    "architecture_mode": "explicit-targets",
+    "architectures": [
+      "120-real"
+    ],
+    "build_dir": "/dev/shm/phydrax-cuda13-sm120",
+    "command": ".venv/bin/python tools/build_cuda_wheels.py --architectures 120-real --components cudss,amgx,quda --python /phydrax/.venv/bin/python --build-dir /dev/shm/phydrax-cuda13-sm120 --download-dir /dev/shm/phydrax-cuda-downloads --wheelhouse /phydrax/dist/cuda13-sm120 --container none --jobs 16",
+    "components": {
+      "amgx": {
+        "build_hash": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+        "ptx": [],
+        "release_architecture_coverage": false,
+        "sass": [
+          "120"
+        ],
+        "sha256": "d74c5a106c16c11142b93c924df0f22ed9a3390c71d10ebeaa3ed584b171f1fc",
+        "shared_cudart": "libcudart.so.13"
+      },
+      "cudss": {
+        "build_hash": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+        "ptx": [],
+        "release_architecture_coverage": false,
+        "sass": [],
+        "sha256": "4b37658e1e6957fc4b40698450a0995426b17d556dabf882ee58115782dae958",
+        "shared_cudart": "libcudart.so.13"
+      },
+      "quda": {
+        "build_hash": "be06bc90a50c50bcf6762c1d18be1b9ac70c98eebde6e2139e466892e0fc69a5",
+        "ptx": [],
+        "release_architecture_coverage": false,
+        "sass": [
+          "120"
+        ],
+        "sha256": "abb9c82103e7a765095c81b2619fffae526a3db711ce2359e6868018fa2949cc",
+        "shared_cudart": "libcudart.so.13"
+      }
+    },
+    "nvidia_wheels": {
+      "nvidia-cublas": "13.8.0.4",
+      "nvidia-cuda-cccl": "13.3.4.3.1",
+      "nvidia-cuda-crt": "13.4.92",
+      "nvidia-cuda-cupti": "13.4.92",
+      "nvidia-cuda-nvcc": "13.4.92",
+      "nvidia-cuda-nvrtc": "13.4.92",
+      "nvidia-cuda-profiler-api": "13.4.92",
+      "nvidia-cuda-runtime": "13.4.92",
+      "nvidia-cudnn-cu13": "9.27.0.42",
+      "nvidia-cudss-cu13": "0.8.0.10",
+      "nvidia-cufft": "12.4.0.43",
+      "nvidia-curand": "10.4.4.72",
+      "nvidia-cusolver": "12.3.5.3",
+      "nvidia-cusparse": "12.8.6.72",
+      "nvidia-nccl-cu13": "2.32.3",
+      "nvidia-nvjitlink": "13.4.92",
+      "nvidia-nvml-dev": "13.4.92",
+      "nvidia-nvshmem-cu13": "3.8.0",
+      "nvidia-nvtx": "13.4.92",
+      "nvidia-nvvm": "13.4.92"
+    },
+    "repair_platform": "manylinux_2_39_x86_64",
+    "seconds": 557.3,
+    "successful": true,
+    "wheel": {
+      "filename": "phydrax_cuda13-0.2.2-py3-none-manylinux_2_39_x86_64.whl",
+      "sha256": "d9a9b9d071fe0fe13e85784356abe69b1338f136141188bf612f847c32e28bbc"
+    }
+  },
+  "native_isolated_checks": [
+    {
+      "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 .tmp/cuda13-qualification/bin/python -m pytest -n 0 -vv -s -x tests/unit/linalg/test_cudss_provider.py::test_cudss_numeric_refresh_implicit_matrix_derivatives tests/unit/backends/test_amg_backends.py tests/unit/backends/test_lattice_providers.py --junitxml=.tmp/native-single-gpu.xml",
+      "passed": 42,
+      "physical_device": 0,
+      "seconds": 231.64,
+      "skipped": 10,
+      "skips": [
+        {
+          "name": "test_amgx_arrays_on_nondefault_gpu",
+          "reason": "Non-default GPU AmgX qualification requires at least two GPUs"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[4-complex64-gpt-grid]",
+          "reason": "required module 'gpt' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[4-complex64-qlat]",
+          "reason": "required module 'qlat' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[4-complex128-gpt-grid]",
+          "reason": "required module 'gpt' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[4-complex128-qlat]",
+          "reason": "required module 'qlat' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[8-complex64-gpt-grid]",
+          "reason": "required module 'gpt' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[8-complex64-qlat]",
+          "reason": "required module 'qlat' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[8-complex128-gpt-grid]",
+          "reason": "required module 'gpt' is not installed"
+        },
+        {
+          "name": "test_external_lattice_provider_contract[8-complex128-qlat]",
+          "reason": "required module 'qlat' is not installed"
+        },
+        {
+          "name": "test_quda_refuses_second_device",
+          "reason": "QUDA second-device refusal requires two CUDA devices"
+        }
+      ],
+      "warnings": [
+        "record_property warns about xunit2 for two tests; this report is not used for the four-device coverage gate."
+      ]
+    },
+    {
+      "cases": [
+        "test_cudss_numeric_refresh_implicit_matrix_derivatives[float32]",
+        "test_cudss_numeric_refresh_implicit_matrix_derivatives[float64]",
+        "test_amgx_native_jit_matches_eager",
+        "test_quda_alternating_gauges_are_exact[eager-gauge_action]",
+        "test_quda_alternating_gauges_are_exact[eager-gauge_force]",
+        "test_quda_alternating_gauges_are_exact[eager-wilson_dslash]",
+        "test_quda_alternating_gauges_are_exact[jit-gauge_action]",
+        "test_quda_alternating_gauges_are_exact[jit-gauge_force]",
+        "test_quda_alternating_gauges_are_exact[jit-wilson_dslash]"
+      ],
+      "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=1 PHYDRAX_CUDA_QUALIFICATION_GPUS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 taskset -c 0-15 .venv/bin/python -m pytest -n 0 -q -rs tests/unit/linalg/test_cudss_provider.py::test_cudss_numeric_refresh_implicit_matrix_derivatives tests/unit/backends/test_amg_backends.py::test_amgx_native_jit_matches_eager tests/unit/backends/test_lattice_providers.py::test_quda_alternating_gauges_are_exact --junitxml=.tmp/native-gpu-1.xml",
+      "passed": 9,
+      "physical_device": 1,
+      "seconds": 50.64,
+      "skipped": 0
+    },
+    {
+      "cases": [
+        "test_cudss_numeric_refresh_implicit_matrix_derivatives[float32]",
+        "test_cudss_numeric_refresh_implicit_matrix_derivatives[float64]",
+        "test_amgx_native_jit_matches_eager",
+        "test_quda_alternating_gauges_are_exact[eager-gauge_action]",
+        "test_quda_alternating_gauges_are_exact[eager-gauge_force]",
+        "test_quda_alternating_gauges_are_exact[eager-wilson_dslash]",
+        "test_quda_alternating_gauges_are_exact[jit-gauge_action]",
+        "test_quda_alternating_gauges_are_exact[jit-gauge_force]",
+        "test_quda_alternating_gauges_are_exact[jit-wilson_dslash]"
+      ],
+      "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=2 PHYDRAX_CUDA_QUALIFICATION_GPUS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 taskset -c 16-31 .venv/bin/python -m pytest -n 0 -q -rs tests/unit/linalg/test_cudss_provider.py::test_cudss_numeric_refresh_implicit_matrix_derivatives tests/unit/backends/test_amg_backends.py::test_amgx_native_jit_matches_eager tests/unit/backends/test_lattice_providers.py::test_quda_alternating_gauges_are_exact --junitxml=.tmp/native-gpu-2.xml",
+      "passed": 9,
+      "physical_device": 2,
+      "seconds": 50.65,
+      "skipped": 0
+    },
+    {
+      "cases": [
+        "test_cudss_numeric_refresh_implicit_matrix_derivatives[float32]",
+        "test_cudss_numeric_refresh_implicit_matrix_derivatives[float64]",
+        "test_amgx_native_jit_matches_eager",
+        "test_quda_alternating_gauges_are_exact[eager-gauge_action]",
+        "test_quda_alternating_gauges_are_exact[eager-gauge_force]",
+        "test_quda_alternating_gauges_are_exact[eager-wilson_dslash]",
+        "test_quda_alternating_gauges_are_exact[jit-gauge_action]",
+        "test_quda_alternating_gauges_are_exact[jit-gauge_force]",
+        "test_quda_alternating_gauges_are_exact[jit-wilson_dslash]"
+      ],
+      "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=3 PHYDRAX_CUDA_QUALIFICATION_GPUS=1 XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 taskset -c 96-111 .venv/bin/python -m pytest -n 0 -q -rs tests/unit/linalg/test_cudss_provider.py::test_cudss_numeric_refresh_implicit_matrix_derivatives tests/unit/backends/test_amg_backends.py::test_amgx_native_jit_matches_eager tests/unit/backends/test_lattice_providers.py::test_quda_alternating_gauges_are_exact --junitxml=.tmp/native-gpu-3.xml",
+      "passed": 9,
+      "physical_device": 3,
+      "seconds": 228.18,
+      "skipped": 0
+    }
+  ],
+  "native_qualification": {
+    "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0,1,2,3 UV_CACHE_DIR=/dev/shm/phydrax-uv-cache UV_LINK_MODE=copy .venv/bin/python tools/qualify_cuda_wheels.py --required-gpus 4 --venv /phydrax/.tmp/cuda13-qualification --phydrax-wheel /phydrax/dist/phydrax-0.2.2-py3-none-any.whl --wheelhouse /phydrax/dist/cuda13-sm120 --evidence /phydrax/.tmp/cuda13-native-qualification.json",
+    "result": "Timed out after 1800 seconds. Driver did not publish final evidence; no complete four-GPU provider qualification is claimed.",
+    "successful": false,
+    "timeout_seconds": 1800
+  },
+  "packages": {
+    "equinox": "0.13.8",
+    "jax": "0.11.2",
+    "jax-cuda13-plugin": "0.11.2",
+    "jaxlib": "0.11.2",
+    "numpy": "2.5.4",
+    "nvidia-cuda-runtime": "13.4.92",
+    "nvidia-cudss-cu13": "0.8.0.10",
+    "nvidia-nccl-cu13": "2.32.3",
+    "phydrax": "0.2.2"
+  },
+  "peer_transfer": {
+    "expected": [
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      11.0,
+      12.0,
+      13.0,
+      14.0,
+      15.0,
+      16.0
+    ],
+    "probe_sha256": "72009584a997c67ae9da93f04d812558f7b32bfe9e650b443403789a8d2c4f04",
+    "probe_source": "\"\"\"Independent CUDA-runtime peer-copy integrity probe; no JAX or Phydrax.\"\"\"\n\nimport ctypes as ct\nimport json\nfrom pathlib import Path\n\nimport numpy as np\n\n\nruntime = ct.CDLL(str(Path('/phydrax/.venv/lib/python3.12/site-packages/nvidia/cu13/lib/libcudart.so.13')))\nruntime.cudaSetDevice.argtypes = [ct.c_int]\nruntime.cudaMalloc.argtypes = [ct.POINTER(ct.c_void_p), ct.c_size_t]\nruntime.cudaFree.argtypes = [ct.c_void_p]\nruntime.cudaMemcpy.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t, ct.c_int]\nruntime.cudaMemcpyPeer.argtypes = [ct.c_void_p, ct.c_int, ct.c_void_p, ct.c_int, ct.c_size_t]\nruntime.cudaDeviceCanAccessPeer.argtypes = [ct.POINTER(ct.c_int), ct.c_int, ct.c_int]\nruntime.cudaDeviceEnablePeerAccess.argtypes = [ct.c_int, ct.c_uint]\nruntime.cudaDeviceSynchronize.argtypes = []\n\n\ndef check(status: int) -> None:\n    if status:\n        raise RuntimeError(f'CUDA runtime error {status}')\n\n\nexpected = np.arange(1, 17, dtype=np.float32)\nbuffers: list[ct.c_void_p] = []\nfor device in range(4):\n    check(runtime.cudaSetDevice(device))\n    pointer = ct.c_void_p()\n    check(runtime.cudaMalloc(ct.byref(pointer), expected.nbytes))\n    buffers.append(pointer)\nrows: list[dict[str, object]] = []\nfor source in range(4):\n    for target in range(4):\n        if source == target:\n            continue\n        check(runtime.cudaSetDevice(source))\n        check(runtime.cudaMemcpy(buffers[source], ct.c_void_p(expected.ctypes.data), expected.nbytes, 1))\n        check(runtime.cudaDeviceSynchronize())\n        check(runtime.cudaSetDevice(target))\n        accessible = ct.c_int()\n        check(runtime.cudaDeviceCanAccessPeer(ct.byref(accessible), target, source))\n        if accessible.value:\n            check(runtime.cudaDeviceEnablePeerAccess(source, 0))\n        zeros = np.zeros_like(expected)\n        check(runtime.cudaMemcpy(buffers[target], ct.c_void_p(zeros.ctypes.data), zeros.nbytes, 1))\n        check(runtime.cudaMemcpyPeer(buffers[target], target, buffers[source], source, expected.nbytes))\n        check(runtime.cudaDeviceSynchronize())\n        observed = np.empty_like(expected)\n        check(runtime.cudaMemcpy(ct.c_void_p(observed.ctypes.data), buffers[target], observed.nbytes, 2))\n        row = {'source': source, 'target': target, 'peer_access_reported': bool(accessible.value), 'passed': bool(np.array_equal(observed, expected)), 'observed': observed.tolist()}\n        rows.append(row)\n        print(json.dumps(row), flush=True)\nfor device, pointer in enumerate(buffers):\n    check(runtime.cudaSetDevice(device))\n    check(runtime.cudaFree(pointer))\nPath('/phydrax/.tmp/peer-transfer-results.json').write_text(json.dumps({'expected': expected.tolist(), 'transfers': rows}, indent=2) + '\\n')\nraise SystemExit(0 if all(row['passed'] for row in rows) else 1)\n",
+    "transfers": [
+      {
+        "observed": [
+          -0.0015943944454193115,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 0,
+        "target": 1
+      },
+      {
+        "observed": [
+          -0.0015943944454193115,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 0,
+        "target": 2
+      },
+      {
+        "observed": [
+          -0.0015943944454193115,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 0,
+        "target": 3
+      },
+      {
+        "observed": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 1,
+        "target": 0
+      },
+      {
+        "observed": [
+          -0.0015943944454193115,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 1,
+        "target": 2
+      },
+      {
+        "observed": [
+          -0.0015943944454193115,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 1,
+        "target": 3
+      },
+      {
+        "observed": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 2,
+        "target": 0
+      },
+      {
+        "observed": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 2,
+        "target": 1
+      },
+      {
+        "observed": [
+          -0.0015943944454193115,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 2,
+        "target": 3
+      },
+      {
+        "observed": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 3,
+        "target": 0
+      },
+      {
+        "observed": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 3,
+        "target": 1
+      },
+      {
+        "observed": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "passed": false,
+        "peer_access_reported": true,
+        "source": 3,
+        "target": 2
+      }
+    ]
+  },
+  "scope": "Single-host RTX PRO 6000 readiness; general multi-GPU qualification refused because CUDA peer transfers corrupt data.",
+  "single_gpu_spectral_benchmark": {
+    "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 .venv/bin/python -m benchmarks.distributed_spectral --campaign one-device-functional --schedule slab --shape 32,32,32 --mesh-shape 1 --precision float64 --repeats 3 --output .tmp/rtx-pro-6000-spectral.json",
+    "record": {
+      "configuration": {
+        "campaign": "one-device-functional",
+        "maximum_bytes": 2147483648,
+        "mesh_shape": [
+          1
+        ],
+        "precision": "float64",
+        "repeats": 3,
+        "schedule": "slab",
+        "shape": [
+          32,
+          32,
+          32
+        ]
+      },
+      "environment": {
+        "default_float_dtype": "float64",
+        "fingerprint": "856715a3ec6faafc9e116c8ec7e1ef244c97d0f3cd7a285a5eb5c95362136302",
+        "jax": {
+          "backend": "gpu",
+          "devices": [
+            {
+              "kind": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+              "platform": "gpu"
+            }
+          ],
+          "version": "0.11.2",
+          "x64_enabled": true
+        },
+        "jaxlib_version": "0.11.2",
+        "logical_cpus": 384,
+        "machine": "x86_64",
+        "numpy_version": "2.5.4",
+        "package_fingerprint": "d14423e5854f7559bfdb46c523d3259769fdaf558b0237d4035e82fb047fed01",
+        "performance_environment": {
+          "JAX_COMPILATION_CACHE_DIR": null,
+          "JAX_PLATFORMS": "cuda,cpu",
+          "JAX_PLATFORM_NAME": null,
+          "MKL_NUM_THREADS": null,
+          "NCCL_NVLS_ENABLE": null,
+          "NCCL_P2P_DISABLE": null,
+          "NPROC": null,
+          "OMP_NUM_THREADS": "1",
+          "OPENBLAS_NUM_THREADS": "1",
+          "VECLIB_MAXIMUM_THREADS": null,
+          "XLA_FLAGS": null,
+          "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+          "XLA_PYTHON_CLIENT_PREALLOCATE": "false"
+        },
+        "phydrax_version": "0.2.2",
+        "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+        "processor": "x86_64",
+        "python_version": "3.12.3"
+      },
+      "identity": {
+        "benchmark_driver_fingerprint": "fc43d94e308bc65d5c04f3ce8b479df965c9cf63a656c446f9af32b2042855bc",
+        "evidence_schema": {
+          "fields": [
+            "configuration",
+            "environment",
+            "row"
+          ],
+          "signature": "41174f2d29fc3a3118fbbcd776bd40f9b2e6cb9652b7b6fee0c52b583259d142"
+        },
+        "fingerprint": "8e4a17166ce28f4b70d8b157b5aa12eb0a0cca032be1a266d537dbf00ecd6ad7",
+        "source_build_fingerprint": "e60d1101e937695e213dc4f0d30efcfb786bd62c590294db91a88386c39de823"
+      },
+      "row": {
+        "campaign": "one-device-functional",
+        "defects": {
+          "bounded_numpy_forward_relative_linf": 1.777269986422543e-16,
+          "distributed_adjoint_relative": 7.158600849935884e-15,
+          "distributed_round_trip_relative_linf": 9.19565075425843e-16
+        },
+        "hardware_process_host_evidence": {
+          "host": {
+            "load_average_1_5_15": [
+              3.9296875,
+              4.974609375,
+              6.2236328125
+            ],
+            "logical_cpus": 384,
+            "machine": "x86_64",
+            "node": "92869c4814b7",
+            "processor": "x86_64",
+            "release": "7.0.0-28-generic",
+            "system": "Linux"
+          },
+          "process": {
+            "count": 1,
+            "global_device_count": 1,
+            "index": 0,
+            "local_device_count": 1
+          },
+          "scope": "observed by this process at benchmark execution time",
+          "selected_devices": [
+            {
+              "device_kind": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+              "id": 0,
+              "platform": "gpu",
+              "process_index": 0
+            }
+          ],
+          "visible_devices": [
+            {
+              "device_kind": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+              "id": 0,
+              "platform": "gpu",
+              "process_index": 0
+            }
+          ]
+        },
+        "ids": {
+          "execution_id": "503a96841326a4dacaa37d2411d91cc6e65083c7a7696bf3c49e291e005ebea9",
+          "forward_sequence_id": "fc81e2117c204f069a0ab619bf7e320426d00ba758dfce9b7a879c92dc701e6a",
+          "inverse_sequence_id": "3c96e31b68e74525ff499dabb7449252397f36ddae2ccf7a580990b4f7bb84a8",
+          "modal_layout_id": "65c1edfdbea2d983accc7335a44bdfb8d95dad9a7b311c0af4a6023f63d395dc",
+          "numerical_id": "1c0b9d08e9f17cb404f6e3583cc550d796085eef8bed34b194453ddacf1af967",
+          "owner_id": "b0126a4d43a6cd80a03136f6af283c72d92413378037fbad19e6825cb325a2b6",
+          "padded_forward_sequence_id": "d0aa50eceb2e40946f3070efbc79168002badfcd7434957477502a7512fe09de",
+          "padded_inverse_sequence_id": "3c35886731d63a018fdacea6adddbac7cd41b5d932e126597a72f222644f333b",
+          "payload_admission_id": "3392e4dc9a6593e0e85eda3e538cf6f24e60e70f176929cb021f1770e9ea39a5",
+          "physical_layout_id": "c4b95f1f889eca6b7275e051dfcb2d9aa4595f6b578de34ac7358667bcfe8c84",
+          "plan_id": "5ed3c0657bc2b2d3eca37c9a0987258ff7c99387ef6c6a12068b5bcbba824d4e",
+          "precision_policy_id": "193fbaaf5e3437f614957f231c303c6fc5258b971531a6dcca500a65e175e421",
+          "resource_report_id": "8611e5271ba4f70bfbdf1f11516ab0b350e48581354be74ac99bd8298d3971a6",
+          "topology_id": "0e8ed2d8ec1dc07ceacbe2a140b578fdbc0f19b49ba2dc8a82fb62bc2107aaf8"
+        },
+        "memory": {
+          "after_compilation": {
+            "devices": [
+              {
+                "allocator_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 2096896
+                },
+                "allocator_limit": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 76483133440
+                },
+                "allocator_peak_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 2096896
+                },
+                "allocator_reserved": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 2097152
+                },
+                "device_id": 0,
+                "live_array_bytes": {
+                  "method": "jax_live_arrays",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 3145745
+                },
+                "platform": "gpu",
+                "process_index": 0,
+                "provider_id": "gpu",
+                "provider_version": "cuda 13040",
+                "timestamp_ns": 1792352771986875080
+              }
+            ],
+            "host": {
+              "host_available": {
+                "method": "procfs_meminfo_available",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1547583258624
+              },
+              "host_total": {
+                "method": "sysconf_physical_pages",
+                "resolution_bytes": 4096,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1622816083968
+              },
+              "process_index": 0,
+              "process_peak_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1447571456
+              },
+              "process_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1447571456
+              },
+              "provider": "linux_procfs",
+              "timestamp_ns": 1792352771985025935
+            }
+          },
+          "after_placement": {
+            "devices": [
+              {
+                "allocator_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 2096896
+                },
+                "allocator_limit": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 76483133440
+                },
+                "allocator_peak_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 2096896
+                },
+                "allocator_reserved": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 2097152
+                },
+                "device_id": 0,
+                "live_array_bytes": {
+                  "method": "jax_live_arrays",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 1572881
+                },
+                "platform": "gpu",
+                "process_index": 0,
+                "provider_id": "gpu",
+                "provider_version": "cuda 13040",
+                "timestamp_ns": 1792352771486784106
+              }
+            ],
+            "host": {
+              "host_available": {
+                "method": "procfs_meminfo_available",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1547689693184
+              },
+              "host_total": {
+                "method": "sysconf_physical_pages",
+                "resolution_bytes": 4096,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1622816083968
+              },
+              "process_index": 0,
+              "process_peak_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1430577152
+              },
+              "process_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1430577152
+              },
+              "provider": "linux_procfs",
+              "timestamp_ns": 1792352771484743224
+            }
+          },
+          "after_validation": {
+            "devices": [
+              {
+                "allocator_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 3669760
+                },
+                "allocator_limit": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 76483133440
+                },
+                "allocator_peak_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 72352000
+                },
+                "allocator_reserved": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 81788928
+                },
+                "device_id": 0,
+                "live_array_bytes": {
+                  "method": "jax_live_arrays",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 4718609
+                },
+                "platform": "gpu",
+                "process_index": 0,
+                "provider_id": "gpu",
+                "provider_version": "cuda 13040",
+                "timestamp_ns": 1792352801212292357
+              }
+            ],
+            "host": {
+              "host_available": {
+                "method": "procfs_meminfo_available",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1547485818880
+              },
+              "host_total": {
+                "method": "sysconf_physical_pages",
+                "resolution_bytes": 4096,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1622816083968
+              },
+              "process_index": 0,
+              "process_peak_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1511993344
+              },
+              "process_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1511993344
+              },
+              "provider": "linux_procfs",
+              "timestamp_ns": 1792352801208763968
+            }
+          },
+          "after_warm_execution": {
+            "devices": [
+              {
+                "allocator_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 3145472
+                },
+                "allocator_limit": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 76483133440
+                },
+                "allocator_peak_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 4194048
+                },
+                "allocator_reserved": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 6291456
+                },
+                "device_id": 0,
+                "live_array_bytes": {
+                  "method": "jax_live_arrays",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 4194321
+                },
+                "platform": "gpu",
+                "process_index": 0,
+                "provider_id": "gpu",
+                "provider_version": "cuda 13040",
+                "timestamp_ns": 1792352772009750273
+              }
+            ],
+            "host": {
+              "host_available": {
+                "method": "procfs_meminfo_available",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1547583934464
+              },
+              "host_total": {
+                "method": "sysconf_physical_pages",
+                "resolution_bytes": 4096,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1622816083968
+              },
+              "process_index": 0,
+              "process_peak_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1452900352
+              },
+              "process_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1452900352
+              },
+              "provider": "linux_procfs",
+              "timestamp_ns": 1792352772008266145
+            }
+          },
+          "baseline": {
+            "devices": [
+              {
+                "allocator_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 768
+                },
+                "allocator_limit": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 76483133440
+                },
+                "allocator_peak_in_use": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 1024
+                },
+                "allocator_reserved": {
+                  "method": "jax_memory_stats",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 2097152
+                },
+                "device_id": 0,
+                "live_array_bytes": {
+                  "method": "jax_live_arrays",
+                  "resolution_bytes": 1,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 17
+                },
+                "platform": "gpu",
+                "process_index": 0,
+                "provider_id": "gpu",
+                "provider_version": "cuda 13040",
+                "timestamp_ns": 1792352771457265099
+              }
+            ],
+            "host": {
+              "host_available": {
+                "method": "procfs_meminfo_available",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1547706208256
+              },
+              "host_total": {
+                "method": "sysconf_physical_pages",
+                "resolution_bytes": 4096,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1622816083968
+              },
+              "process_index": 0,
+              "process_peak_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1427984384
+              },
+              "process_resident": {
+                "method": "procfs_status",
+                "resolution_bytes": 1024,
+                "scope": "baseline",
+                "unavailable_reason": null,
+                "value_bytes": 1427984384
+              },
+              "provider": "linux_procfs",
+              "timestamp_ns": 1792352771453977191
+            }
+          },
+          "compiler": {
+            "argument_bytes": 524288,
+            "bytes_accessed": 7340032,
+            "flops": 4030464,
+            "generated_code_bytes": 0,
+            "output_bytes": 524288,
+            "source": "xla",
+            "temporary_bytes": 524288,
+            "unavailable_reason": null
+          },
+          "logical_input_bytes": 524288,
+          "logical_output_bytes": 524288,
+          "logical_resource_report": {
+            "canonical_storage_bytes": 524288,
+            "collective_payload_bytes": 524288,
+            "maximum_bytes": 2147483648,
+            "padded_storage_bytes": 524288,
+            "peak_live_bytes": 1572864,
+            "transform_workspace_bytes": 524288
+          },
+          "retained_changed_input_bytes": 1048576,
+          "retained_changed_input_count": 2,
+          "scope": "process-local samples; allocator peaks are since process start"
+        },
+        "mesh_shape": [
+          1
+        ],
+        "passed": true,
+        "qualification": {
+          "claimed": false,
+          "scope": "functional-only forced CPU or one-device evidence"
+        },
+        "reference": {
+          "campaign_payload_host_gather": false,
+          "maximum_coefficients": 65536,
+          "reduction_dtype": "float64",
+          "shape": [
+            4,
+            4,
+            4
+          ]
+        },
+        "schedule": "slab",
+        "shape": [
+          32,
+          32,
+          32
+        ],
+        "static_contract": {
+          "admitted_payload_shapes": [
+            []
+          ],
+          "coefficient_dtype": "complex128",
+          "collective_count": 1,
+          "host_gather": false,
+          "reduction_dtype": "float64",
+          "sequence_identity_scope": "core static stage sequences, also bound by execution_id",
+          "state_shape": [],
+          "transform_dtype": "complex128"
+        },
+        "timing": {
+          "bounded_numpy_reference_seconds": 11.194503528,
+          "compilation_seconds": 0.427650481,
+          "first_synchronized_seconds": 0.015120693,
+          "generate_and_place_seconds": 0.013022715,
+          "lowering_seconds": 0.068862235,
+          "warm_changed_input": {
+            "count": 3,
+            "max_seconds": 0.001661204,
+            "mean_seconds": 0.001535807,
+            "median_seconds": 0.001519541,
+            "min_seconds": 0.001426676,
+            "samples_seconds": [
+              0.001426676,
+              0.001519541,
+              0.001661204
+            ],
+            "std_seconds": 9.643402844432039e-05
+          },
+          "warm_changed_input_generate_and_place_seconds": 0.014055813
+        },
+        "tolerance": 1e-11
+      },
+      "workload_id": "1d2b9db64473bbba3617add6ef8e09c66862d48bf5eea4430fdae6643103ba98"
+    },
+    "uncontended": true
+  },
+  "successful": false,
+  "transport_provenance_regression": {
+    "after": "test_performance_configuration_changes_environment_identity[peer-transport] passed in focused matrix",
+    "before_peer_disabled": "52d2913a5d4b1e54e033a1379482c1029195a17900bcd7c2e5c63aca3322a9a9",
+    "before_peer_enabled": "52d2913a5d4b1e54e033a1379482c1029195a17900bcd7c2e5c63aca3322a9a9"
+  },
+  "unchanged_scope": [
+    "No host boot, IOMMU, ACS, driver or virtualization configuration was modified.",
+    "No automatic NCCL transport fallback or host-staging replacement was added.",
+    "Historical H100/A100 measurements and release-architecture claims were not rewritten."
+  ],
+  "verification": [
+    {
+      "command": "env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu PYTEST_XDIST_AUTO_NUM_WORKERS=8 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 .venv/bin/python -m pytest -n auto -q tests/unit/test_benchmark_runtime.py tests/unit/test_advanced_solver_benchmark_schema.py tests/unit/test_advanced_solver_benchmark_harness.py tests/unit/test_cuda_environment.py tests/unit/test_cuda_build_tools.py tests/unit/test_cuda_wheel_qualification.py tests/integration/test_cuda_import_contract.py",
+      "passed": 268,
+      "seconds": 116.49,
+      "skipped": 2
+    },
+    {
+      "command": "uv pip check --python .venv/bin/python",
+      "result": "All 139 installed packages are compatible"
+    },
+    {
+      "available": true,
+      "dependency": "phydrax+phydrax-cuda13+CUDA",
+      "dependency_version": "0.2.2",
+      "scenario": "AmgxAdapter().availability(\"linear.scalar\") with CUDA_VISIBLE_DEVICES=1 and LD_LIBRARY_PATH unset"
+    },
+    {
+      "command": ".venv/bin/ruff format benchmarks/_runtime.py benchmarks/advanced_solvers/adapters/amgx.py tools/distributed_substrate_benchmark.py tests/unit/test_benchmark_runtime.py && .venv/bin/ruff check benchmarks/_runtime.py benchmarks/advanced_solvers/adapters/amgx.py tools/distributed_substrate_benchmark.py tests/unit/test_benchmark_runtime.py",
+      "result": "4 files left unchanged; all checks passed"
+    },
+    {
+      "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 .venv/bin/python -m pytest -n 0 -q -rs tests/unit/atomistic/test_mace_acceleration.py::test_compiled_cuda_coupling_values_derivatives_and_resources tests/unit/backends/test_spatial_backend.py::test_compiled_pallas_full_fmm_matches_jax_direct_and_strength_derivatives",
+      "passed": 2,
+      "passed_surface": "compiled full FMM float32 and float64, including strength derivatives",
+      "seconds": 490.12,
+      "setup_error": "MACE autouse reference fixture requires CPU backend; invocation incorrectly set JAX_PLATFORMS=cuda. Corrected invocation uses cuda,cpu and reruns only MACE.",
+      "setup_errors": 4,
+      "warnings": "10 upstream Pallas Triton backend deprecation warnings; not suppressed"
+    },
+    {
+      "command": "env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu PATH=/phydrax/.venv/bin:/usr/bin:/bin .venv/bin/python tools/check_typing.py check",
+      "result": "Initial environment missing optional typing imports; installed ase, matplotlib, griffe, pydicom, modepy==2026.1, xarray, mujoco before repeating the gate. No source suppressions added."
+    },
+    {
+      "command": "env -u LD_LIBRARY_PATH JAX_PLATFORMS=cpu PATH=/phydrax/.venv/bin:/usr/bin:/bin .venv/bin/python tools/check_typing.py check",
+      "result": "passed with zero diagnostics after provider import prerequisites were installed",
+      "seconds": 188.04
+    },
+    {
+      "command": "env -u LD_LIBRARY_PATH CUDA_VISIBLE_DEVICES=0 JAX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 .venv/bin/python -m pytest -n 0 -q -rs tests/unit/atomistic/test_mace_acceleration.py::test_compiled_cuda_coupling_values_derivatives_and_resources",
+      "passed": 4,
+      "seconds": 397.52,
+      "surface": "Compiled MACE float32/float64, deterministic/compensated accumulation, all-operand and mixed derivatives, compiler resources, and refusal contracts"
+    },
+    {
+      "command": "env UV_CACHE_DIR=/dev/shm/phydrax-uv-cache UV_LINK_MODE=copy uv pip install --python .venv/bin/python --no-sources --find-links dist/cuda13-sm120 -e \".[cuda13]\"",
+      "result": "passed; reused audited companion and rebuilt only editable phydrax 0.2.2"
+    }
+  ]
+}
